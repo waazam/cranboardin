@@ -21,6 +21,7 @@ enum GameState { RUNNING, LEVEL_COMPLETE, GAME_OVER }
 @onready var zombies = $ViewportFrame/SubViewport/Zombies
 @onready var pickups = $ViewportFrame/SubViewport/Pickups
 @onready var boosts = $ViewportFrame/SubViewport/Boosts
+@onready var trail = $ViewportFrame/SubViewport/Trail
 @onready var player = $ViewportFrame/SubViewport/Player
 @onready var camera_rig = $ViewportFrame/SubViewport/CameraRig
 @onready var hud = $HUD
@@ -93,11 +94,13 @@ func _start_level() -> void:
 	zombies.setup(track, player, level)
 	pickups.setup(track, player, level)
 	boosts.setup(track, player, level)
+	trail.setup(player)
 	camera_rig.snap_to_target()
 	hud.reset(level)
 	_streak = 0
 	_combo_timer = 0.0
 	hud.set_score(score, 1, false)
+	trail.set_state(score, 1)
 
 
 func _process(delta: float) -> void:
@@ -112,6 +115,8 @@ func _process(delta: float) -> void:
 		if _combo_timer <= 0.0 and _streak > 0:
 			_streak = 0
 			hud.set_score(score, 1, false)
+			trail.break_combo()
+			trail.set_state(score, 1)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -139,6 +144,8 @@ func _on_player_damaged(_health: int) -> void:
 	_streak = 0
 	_combo_timer = 0.0
 	hud.set_score(score, 1, false)
+	trail.break_combo()
+	trail.set_state(score, 1)
 
 
 func _on_player_died() -> void:
@@ -178,6 +185,7 @@ func _on_player_finished(time: float, top_speed: float) -> void:
 	_streak = 0
 	_combo_timer = 0.0
 	hud.set_score(score, 1, false)  # keep the corner label in sync with the panel
+	trail.set_state(score, 1)
 	_save_best_if_beaten()
 	hud.show_level_complete(level, time, top_speed, score)
 	_play_sfx(_sfx_finish)
@@ -198,6 +206,7 @@ func _add_score(points: int) -> void:
 	_combo_timer = COMBO_WINDOW
 	score += points * _combo_mult()
 	hud.set_score(score, _combo_mult(), true)
+	trail.set_state(score, _combo_mult())
 
 
 func _save_best_if_beaten() -> void:

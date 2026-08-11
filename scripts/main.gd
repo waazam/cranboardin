@@ -38,9 +38,9 @@ var _sfx_pickup: AudioStream
 
 
 func _ready() -> void:
-	# Chunkier pixels on mobile (1/4 res vs 1/3 on desktop).
+	# Chunkier pixels on mobile (1/5 res vs 1/3 on desktop).
 	if hud.is_mobile():
-		viewport_frame.stretch_shrink = 4
+		viewport_frame.stretch_shrink = 5
 
 	_setup_audio()
 

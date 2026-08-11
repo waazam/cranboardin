@@ -128,30 +128,6 @@ func get_speed_ratio() -> float:
 
 var _jump_held_prev: bool = false
 
-## Tilt input (mobile): x = steer, y = accelerate/brake. Zero when no
-## accelerometer exists. Neutral pitch is calibrated from how the phone
-## is held during the first second, so any comfortable grip works.
-var _tilt: Vector2 = Vector2.ZERO
-var _tilt_neutral_y: float = 0.0
-var _tilt_cal_time: float = 0.0
-
-
-func _poll_tilt(delta: float) -> void:
-	var g := Input.get_accelerometer()
-	if g.is_zero_approx():
-		_tilt = Vector2.ZERO
-		return
-	if _tilt_cal_time < 1.2:
-		_tilt_neutral_y = g.y if _tilt_cal_time <= 0.0 else lerpf(_tilt_neutral_y, g.y, 0.15)
-		_tilt_cal_time += delta
-		_tilt = Vector2.ZERO
-		return
-	var steer := g.x / 3.5
-	var accel := (_tilt_neutral_y - g.y) / 2.8
-	_tilt = Vector2(
-		0.0 if absf(steer) < 0.12 else clampf(steer, -1.0, 1.0),
-		0.0 if absf(accel) < 0.15 else clampf(accel, -1.0, 1.0))
-
 
 ## Polled (not event-driven) so it works identically inside the pixelation
 ## SubViewport, where input events don't reliably propagate.
@@ -178,7 +154,6 @@ func _physics_process(delta: float) -> void:
 	elapsed += delta
 	_update_invulnerability(delta)
 	_poll_jump_input()
-	_poll_tilt(delta)
 
 	var grounded := height <= 0.001
 	_coyote_timer = coyote_time if grounded else _coyote_timer - delta
@@ -230,12 +205,11 @@ func _steer_axis() -> float:
 		axis += 1.0
 	if touch_controls:
 		axis += touch_controls.get_touch_steer()
-	axis += _tilt.x
 	return clampf(axis, -1.0, 1.0)
 
 
 func _update_speed(delta: float) -> void:
-	# One accelerate/brake axis merging keyboard, touch d-pad, and tilt.
+	# One accelerate/brake axis merging keyboard and the touch d-pad.
 	var accel_axis := 0.0
 	if Input.is_physical_key_pressed(KEY_W):
 		accel_axis += 1.0
@@ -243,7 +217,7 @@ func _update_speed(delta: float) -> void:
 		accel_axis -= 1.0
 	if touch_controls:
 		accel_axis += touch_controls.get_touch_accel()
-	accel_axis = clampf(accel_axis + _tilt.y, -1.0, 1.0)
+	accel_axis = clampf(accel_axis, -1.0, 1.0)
 
 	var target_speed: float = lerp(base_speed, max_speed, get_progress())
 	target_speed += accel_boost * maxf(accel_axis, 0.0)

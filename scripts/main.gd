@@ -20,12 +20,34 @@ enum GameState { RUNNING, LEVEL_COMPLETE, GAME_OVER }
 @onready var track = $ViewportFrame/SubViewport/Track
 @onready var zombies = $ViewportFrame/SubViewport/Zombies
 @onready var pickups = $ViewportFrame/SubViewport/Pickups
+@onready var boosts = $ViewportFrame/SubViewport/Boosts
 @onready var player = $ViewportFrame/SubViewport/Player
 @onready var camera_rig = $ViewportFrame/SubViewport/CameraRig
 @onready var hud = $HUD
 
 var level: int = 1
 var state: GameState = GameState.RUNNING
+
+# --- Style scoring ----------------------------------------------------------
+# Points for landed tricks, clearing zombies airborne, near misses, and
+# boost pads. Chaining events inside COMBO_WINDOW builds a multiplier;
+# a hit (or letting the window lapse) drops it. Score carries across
+# levels in a session and resets when a game over is retried. Best score
+# persists to disk and shows on the menu.
+const SAVE_PATH := "user://save.cfg"
+const COMBO_WINDOW := 4.0
+const SCORE_TRICK := 150
+const SCORE_OVER := 200
+const SCORE_NEAR := 75
+const SCORE_BOOST := 50
+const SCORE_FINISH := 500
+
+var score: int = 0
+var best_score: int = 0
+var best_level: int = 1
+var _streak: int = 0
+var _combo_timer: float = 0.0
+var _level_start_score: int = 0
 
 var _music: AudioStreamPlayer
 var _wind: AudioStreamPlayer
@@ -54,9 +76,13 @@ func _ready() -> void:
 	player.died.connect(_on_player_died)
 	player.jumped.connect(_on_player_jumped)
 	player.tricked.connect(_on_player_tricked)
+	player.trick_landed.connect(_on_trick_landed)
 	player.finished.connect(_on_player_finished)
 	pickups.collected.connect(_on_pickup_collected)
+	zombies.zombie_passed.connect(_on_zombie_passed)
+	boosts.boosted.connect(_on_boost)
 
+	_load_best()
 	_start_level()
 
 
@@ -66,15 +92,26 @@ func _start_level() -> void:
 	player.setup(track)
 	zombies.setup(track, player, level)
 	pickups.setup(track, player, level)
+	boosts.setup(track, player, level)
 	camera_rig.snap_to_target()
 	hud.reset(level)
+	_streak = 0
+	_combo_timer = 0.0
+	hud.set_score(score, 1, false)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# Wind rush scales with speed (silent when stopped/dead).
 	var ratio: float = player.get_speed_ratio() if state == GameState.RUNNING else 0.0
 	_wind.volume_db = lerpf(-42.0, -13.0, ratio)
 	_wind.pitch_scale = 0.85 + ratio * 0.5
+
+	# Combo lapses if nothing scored inside the window.
+	if _combo_timer > 0.0:
+		_combo_timer -= delta
+		if _combo_timer <= 0.0 and _streak > 0:
+			_streak = 0
+			hud.set_score(score, 1, false)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -83,18 +120,31 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _advance_or_restart() -> void:
-	if state == GameState.LEVEL_COMPLETE:
-		level += 1
+	match state:
+		GameState.LEVEL_COMPLETE:
+			level += 1
+			_level_start_score = score
+		GameState.GAME_OVER:
+			score = 0
+			_level_start_score = 0
+		GameState.RUNNING:
+			# Mid-run restart: drop anything scored this attempt.
+			score = _level_start_score
 	_start_level()
 
 
 func _on_player_damaged(_health: int) -> void:
 	_play_sfx(_sfx_hit)
+	# Taking a hit drops the combo.
+	_streak = 0
+	_combo_timer = 0.0
+	hud.set_score(score, 1, false)
 
 
 func _on_player_died() -> void:
 	state = GameState.GAME_OVER
-	hud.show_game_over(level)
+	_save_best_if_beaten()
+	hud.show_game_over(level, score)
 
 
 func _on_player_jumped() -> void:
@@ -105,14 +155,67 @@ func _on_player_tricked(_trick_name: String) -> void:
 	pass  # tricks are purely visual now; no HUD text
 
 
+func _on_trick_landed(_trick_name: String) -> void:
+	_add_score(SCORE_TRICK)
+
+
+func _on_zombie_passed(kind: String) -> void:
+	_add_score(SCORE_OVER if kind == "over" else SCORE_NEAR)
+
+
+func _on_boost() -> void:
+	_add_score(SCORE_BOOST)
+	_play_sfx(_sfx_pickup, 1.6)
+
+
 func _on_pickup_collected(_health: int) -> void:
 	_play_sfx(_sfx_pickup)
 
 
 func _on_player_finished(time: float, top_speed: float) -> void:
 	state = GameState.LEVEL_COMPLETE
-	hud.show_level_complete(level, time, top_speed)
+	score += SCORE_FINISH
+	_streak = 0
+	_combo_timer = 0.0
+	hud.set_score(score, 1, false)  # keep the corner label in sync with the panel
+	_save_best_if_beaten()
+	hud.show_level_complete(level, time, top_speed, score)
 	_play_sfx(_sfx_finish)
+
+
+# --- Scoring ---------------------------------------------------------------
+
+func _combo_mult() -> int:
+	@warning_ignore("integer_division")
+	var mult: int = 1 + _streak / 3
+	return clampi(mult, 1, 5)
+
+
+func _add_score(points: int) -> void:
+	if state != GameState.RUNNING:
+		return
+	_streak += 1
+	_combo_timer = COMBO_WINDOW
+	score += points * _combo_mult()
+	hud.set_score(score, _combo_mult(), true)
+
+
+func _save_best_if_beaten() -> void:
+	if score <= best_score and level <= best_level:
+		return
+	best_score = maxi(best_score, score)
+	best_level = maxi(best_level, level)
+	var cfg := ConfigFile.new()
+	cfg.set_value("best", "score", best_score)
+	cfg.set_value("best", "level", best_level)
+	cfg.save(SAVE_PATH)
+
+
+func _load_best() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) == OK:
+		best_score = cfg.get_value("best", "score", 0)
+		best_level = cfg.get_value("best", "level", 1)
 
 
 # --- Audio -----------------------------------------------------------------
@@ -145,7 +248,8 @@ func _make_loop_player(path: String, volume_db: float) -> AudioStreamPlayer:
 	return p
 
 
-func _play_sfx(stream: AudioStream) -> void:
+func _play_sfx(stream: AudioStream, pitch: float = 1.0) -> void:
 	if stream:
 		_sfx.stream = stream
+		_sfx.pitch_scale = pitch
 		_sfx.play()

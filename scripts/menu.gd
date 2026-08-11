@@ -6,6 +6,7 @@ extends Node3D
 
 const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
 const GAME_SCENE := "res://scenes/main.tscn"
+const SAVE_PATH := "user://save.cfg"  # written by main.gd
 
 @onready var viewport_frame: SubViewportContainer = $ViewportFrame
 @onready var world: Node3D = $ViewportFrame/SubViewport/World
@@ -161,11 +162,22 @@ func _build_ui() -> void:
 	subtitle.position = Vector2(64, viewport_size.y * 0.24 + 88)
 	ui.add_child(subtitle)
 
+	# Persistent best from past sessions, in the warm window-neon gold.
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) == OK and int(cfg.get_value("best", "score", 0)) > 0:
+		var best := Label.new()
+		best.text = "best score: %d  -  reached level %d" \
+				% [int(cfg.get_value("best", "score", 0)), int(cfg.get_value("best", "level", 1))]
+		best.add_theme_font_size_override("font_size", 16)
+		best.add_theme_color_override("font_color", Color(1.0, 0.75, 0.4))
+		best.position = Vector2(64, viewport_size.y * 0.24 + 126)
+		ui.add_child(best)
+
 	_prompt = Label.new()
 	_prompt.text = "tap or press any key to skate"
 	_prompt.add_theme_font_size_override("font_size", 20)
 	_prompt.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
-	_prompt.position = Vector2(64, viewport_size.y * 0.24 + 150)
+	_prompt.position = Vector2(64, viewport_size.y * 0.24 + 162)
 	ui.add_child(_prompt)
 
 

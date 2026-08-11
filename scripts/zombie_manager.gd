@@ -12,6 +12,8 @@ extends Node3D
 ##   SIDE  -- starts just off the road edge and walks in across it.
 ##   AHEAD -- lurks on the road ahead and closes on the player's lateral.
 
+signal zombie_passed(kind: String)  # "over" = cleared airborne, "near" = grazed
+
 enum SpawnType { SIDE, AHEAD }
 
 const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
@@ -20,6 +22,7 @@ const DESPAWN_BEHIND := 14.0
 const HIT_S_RANGE := 1.0
 const HIT_LATERAL_RANGE := 0.95
 const HIT_MAX_HEIGHT := 1.0
+const NEAR_MISS_RANGE := 2.4
 
 @export var damage_per_hit: int = 26
 @export var base_count: int = 70
@@ -108,7 +111,19 @@ func _physics_process(delta: float) -> void:
 				and absf(zs - _player.s) < HIT_S_RANGE \
 				and absf(zlat - _player.lateral) < HIT_LATERAL_RANGE \
 				and _player.height < HIT_MAX_HEIGHT:
+			z["scored"] = true  # no style points off the zombie that got you
 			_player.take_damage(damage_per_hit)
+
+		# Style scoring, once per zombie, as the player clears it: jumped
+		# clean over it, or squeaked past within near-miss range.
+		if not z["scored"] and zs < _player.s - 0.6:
+			z["scored"] = true
+			if player_running:
+				var lat_gap := absf(zlat - _player.lateral)
+				if lat_gap < HIT_LATERAL_RANGE and _player.height >= HIT_MAX_HEIGHT:
+					zombie_passed.emit("over")
+				elif lat_gap < NEAR_MISS_RANGE:
+					zombie_passed.emit("near")
 
 		# Free zombies the player has passed.
 		if zs < _player.s - DESPAWN_BEHIND:
@@ -139,4 +154,5 @@ func _activate(spawn: Dictionary) -> void:
 		"s": spawn["s"],
 		"lat": spawn["lat"],
 		"shamble": spawn["shamble"],
+		"scored": false,
 	})

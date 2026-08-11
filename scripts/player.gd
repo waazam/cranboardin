@@ -15,6 +15,7 @@ signal damaged(health: int)
 signal died()
 signal jumped()
 signal tricked(trick_name: String)
+signal trick_landed(trick_name: String)
 signal finished(time: float, top_speed: float)
 
 enum RunState { RUNNING, DEAD, FINISHED }
@@ -63,6 +64,10 @@ var _lean_amount: float = 0.0
 var _trick_index: int = 0
 var _spin_duration: float = 0.7
 var _spin_time_left: float = 0.0
+## Pending trick name; cleared on landing (scores) or on a hit (voids).
+var _active_trick: String = ""
+## Boost pads grant a short window of extra target speed.
+var _boost_timer: float = 0.0
 
 ## Visual rig: `visuals` is the tuck/blink pivot; board and rider are
 ## separate entities beneath it (skateboard.gd / character.gd).
@@ -112,6 +117,8 @@ func reset_run() -> void:
 	skateboard.set_carve(0.0)
 	_trick_index = 0
 	_spin_time_left = 0.0
+	_active_trick = ""
+	_boost_timer = 0.0
 	character.reset()
 	_apply_transform()
 
@@ -219,10 +226,14 @@ func _update_speed(delta: float) -> void:
 		accel_axis += touch_controls.get_touch_accel()
 	accel_axis = clampf(accel_axis, -1.0, 1.0)
 
+	_boost_timer = maxf(_boost_timer - delta, 0.0)
+	var pad_bonus := 11.0 if _boost_timer > 0.0 else 0.0
+
 	var target_speed: float = lerp(base_speed, max_speed, get_progress())
 	target_speed += accel_boost * maxf(accel_axis, 0.0)
 	target_speed -= brake_strength * maxf(-accel_axis, 0.0)
-	target_speed = clampf(target_speed, base_speed * 0.5, max_speed + accel_boost)
+	target_speed += pad_bonus
+	target_speed = clampf(target_speed, base_speed * 0.5, max_speed + accel_boost + pad_bonus)
 	current_speed = move_toward(current_speed, target_speed, speed_response * delta)
 	current_speed = maxf(current_speed, 1.0)
 	top_speed = maxf(top_speed, current_speed)
@@ -251,9 +262,11 @@ func _start_trick() -> void:
 	_trick_index += 1
 	if _trick_index % 2 == 1:
 		skateboard.do_kickflip(0.5)
+		_active_trick = "KICKFLIP"
 		tricked.emit("KICKFLIP!")
 	else:
 		_spin_time_left = _spin_duration
+		_active_trick = "360 SPIN"
 		tricked.emit("360 SPIN!")
 
 
@@ -264,10 +277,23 @@ func _update_trick(delta: float, grounded: bool) -> void:
 			_spin_time_left = 0.0
 			visuals.rotation.y = 0.0
 		skateboard.finish_trick()
+		if _active_trick != "":
+			trick_landed.emit(_active_trick)
+			_active_trick = ""
 		return
 	if _spin_time_left > 0.0:
 		_spin_time_left = maxf(_spin_time_left - delta, 0.0)
 		visuals.rotation.y = TAU * (1.0 - _spin_time_left / _spin_duration) if _spin_time_left > 0.0 else 0.0
+
+
+## Called by boost pads: a short burst of extra target speed.
+func apply_boost(duration: float = 1.8) -> void:
+	if run_state == RunState.RUNNING:
+		_boost_timer = duration
+
+
+func is_boosting() -> bool:
+	return _boost_timer > 0.0
 
 
 ## Called by cranberry bottle pickups. Heals to max; if already at or
@@ -286,6 +312,8 @@ func take_damage(amount: int) -> void:
 	current_speed = maxf(base_speed * 0.6, current_speed * hit_speed_multiplier)
 	_lateral_velocity *= 0.2
 	_invulnerable_timer = invulnerable_duration
+	_active_trick = ""  # a hit voids the pending trick score
+	_boost_timer = 0.0
 	if health <= 0:
 		_die()
 	else:
@@ -304,6 +332,7 @@ func _die() -> void:
 
 func _finish() -> void:
 	run_state = RunState.FINISHED
+	_boost_timer = 0.0  # _update_speed stops running; don't freeze the FOV kick on
 	character.set_lean(0.0)
 	character.play_finish()
 	finished.emit(elapsed, top_speed)

@@ -33,7 +33,10 @@ func _physics_process(delta: float) -> void:
 	look_at(_look_target(), Vector3.UP)
 
 	var speed_ratio: float = clampf(target.current_speed / maxf(target.max_speed, 0.01), 0.0, 1.0)
-	camera.fov = lerp(base_fov, max_fov, speed_ratio)
+	var target_fov: float = lerp(base_fov, max_fov, speed_ratio)
+	if target.has_method("is_boosting") and target.is_boosting():
+		target_fov += 7.0  # boost pads punch the FOV out a touch
+	camera.fov = lerpf(camera.fov, target_fov, clampf(9.0 * delta, 0.0, 1.0))
 
 
 func snap_to_target() -> void:

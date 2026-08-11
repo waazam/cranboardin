@@ -38,12 +38,18 @@ var _active: Array[Dictionary] = []
 ## Zombies mid-launch after a boost smash: {node, vel, spin, t}.
 var _smashed: Array[Dictionary] = []
 var _zombie_material: StandardMaterial3D
+var _runner_material: StandardMaterial3D
 
 
 func _ready() -> void:
 	_zombie_material = StandardMaterial3D.new()
 	_zombie_material.albedo_color = Color(0.45, 0.56, 0.36)
 	_zombie_material.roughness = 1.0
+
+	# Runners: rusty red so they read as danger at a distance.
+	_runner_material = StandardMaterial3D.new()
+	_runner_material.albedo_color = Color(0.62, 0.28, 0.2)
+	_runner_material.roughness = 1.0
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -80,11 +86,16 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 				lat = (half + 1.5) * (1.0 if _rng.randf() < 0.5 else -1.0)
 			else:
 				lat = _rng.randf_range(-half + 1.5, half - 1.5)
+			# Runners: rare fast sprinters, more common on later levels.
+			var runner: bool = _rng.randf() < minf(0.10 + 0.03 * (level - 1), 0.3)
 			_spawns.append({
 				"s": spawn_s,
 				"lat": lat,
 				"type": type,
-				"shamble": _rng.randf_range(1.9, 2.7) + (level - 1) * 0.12,
+				"runner": runner,
+				"shamble": _rng.randf_range(3.2, 4.0) + (level - 1) * 0.1 if runner \
+						else _rng.randf_range(1.9, 2.7) + (level - 1) * 0.12,
+				"close": 3.5 if runner else 1.5,
 			})
 			placed += 1
 	_spawns.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["s"] < b["s"])
@@ -111,7 +122,7 @@ func _physics_process(delta: float) -> void:
 		var shamble: float = z["shamble"]
 		zlat = move_toward(zlat, clampf(_player.lateral, -half + 0.4, half - 0.4), shamble * delta)
 		if player_running and zs > _player.s:
-			zs = maxf(zs - 1.5 * delta, _player.s)
+			zs = maxf(zs - z["close"] * delta, _player.s)
 		z["s"] = zs
 		z["lat"] = zlat
 
@@ -192,19 +203,27 @@ func _activate(spawn: Dictionary) -> void:
 	model.scale = Vector3.ONE * 0.95
 	node.add_child(model)
 
-	# Sickly green tint over every mesh in the rig.
+	# Sickly green tint over every mesh in the rig; rusty red for runners.
+	var is_runner: bool = spawn.get("runner", false)
+	var mat := _runner_material if is_runner else _zombie_material
 	for mesh_instance in model.find_children("*", "MeshInstance3D", true, false):
-		(mesh_instance as MeshInstance3D).material_override = _zombie_material
+		(mesh_instance as MeshInstance3D).material_override = mat
 
 	var anim := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if anim:
-		anim.play(&"Walk")
-		anim.speed_scale = _rng.randf_range(0.95, 1.25)
+		if is_runner and anim.has_animation(&"Run"):
+			anim.play(&"Run")
+			anim.speed_scale = _rng.randf_range(1.0, 1.2)
+		else:
+			anim.play(&"Walk")
+			anim.speed_scale = _rng.randf_range(1.2, 1.5) if is_runner \
+					else _rng.randf_range(0.95, 1.25)
 
 	_active.append({
 		"node": node,
 		"s": spawn["s"],
 		"lat": spawn["lat"],
 		"shamble": spawn["shamble"],
+		"close": spawn.get("close", 1.5),
 		"scored": false,
 	})

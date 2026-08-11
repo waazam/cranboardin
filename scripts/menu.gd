@@ -180,6 +180,16 @@ func _build_ui() -> void:
 	_prompt.position = Vector2(64, viewport_size.y * 0.24 + 162)
 	ui.add_child(_prompt)
 
+	# Version stamp, bottom-right, barely-there.
+	var ver := str(ProjectSettings.get_setting("application/config/version", ""))
+	if ver != "":
+		var ver_label := Label.new()
+		ver_label.text = "v" + ver
+		ver_label.add_theme_font_size_override("font_size", 14)
+		ver_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+		ver_label.position = Vector2(viewport_size.x - 140, viewport_size.y - 32)
+		ui.add_child(ver_label)
+
 
 func _start_music() -> void:
 	var stream := load("res://audio/menu_music.wav") as AudioStreamWAV

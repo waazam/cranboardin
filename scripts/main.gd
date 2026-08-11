@@ -22,6 +22,7 @@ enum GameState { RUNNING, LEVEL_COMPLETE, GAME_OVER }
 @onready var pickups = $ViewportFrame/SubViewport/Pickups
 @onready var boosts = $ViewportFrame/SubViewport/Boosts
 @onready var trail = $ViewportFrame/SubViewport/Trail
+@onready var ramps = $ViewportFrame/SubViewport/Ramps
 @onready var player = $ViewportFrame/SubViewport/Player
 @onready var camera_rig = $ViewportFrame/SubViewport/CameraRig
 @onready var hud = $HUD
@@ -43,7 +44,10 @@ const SCORE_NEAR := 75
 const SCORE_BOOST := 50
 const SCORE_SMASH := 125
 const SCORE_RAMPAGE := 300  # every 3rd smash chained inside one boost
+const SCORE_RAMP := 75
 const SCORE_FINISH := 500
+## Trail color tiers (see trail.gd); crossing one plays a chime.
+const TIER_THRESHOLDS := [1000, 3000, 6000, 10000]
 
 var score: int = 0
 var best_score: int = 0
@@ -57,6 +61,7 @@ var _music: AudioStreamPlayer
 var _wind: AudioStreamPlayer
 var _city: AudioStreamPlayer
 var _sfx: AudioStreamPlayer
+var _chime: AudioStreamPlayer  # dedicated, so tier chimes layer over event sfx
 var _sfx_hit: AudioStream
 var _sfx_jump: AudioStream
 var _sfx_finish: AudioStream
@@ -86,6 +91,7 @@ func _ready() -> void:
 	zombies.zombie_passed.connect(_on_zombie_passed)
 	zombies.zombie_smashed.connect(_on_zombie_smashed)
 	boosts.boosted.connect(_on_boost)
+	ramps.ramped.connect(_on_ramp)
 
 	_load_best()
 	_start_level()
@@ -98,6 +104,7 @@ func _start_level() -> void:
 	zombies.setup(track, player, level)
 	pickups.setup(track, player, level)
 	boosts.setup(track, player, level)
+	ramps.setup(track, player, level)
 	trail.setup(player)
 	camera_rig.snap_to_target()
 	hud.reset(level)
@@ -197,19 +204,38 @@ func _on_boost() -> void:
 	_smash_chain = 0  # a fresh pad starts a fresh chain
 
 
+func _on_ramp() -> void:
+	_add_score(SCORE_RAMP)
+	_play_sfx(_sfx_jump, 0.8)  # deeper whoosh than a normal ollie
+	camera_rig.add_shake(0.12)
+
+
 func _on_pickup_collected(_health: int) -> void:
 	_play_sfx(_sfx_pickup)
 
 
 func _on_player_finished(time: float, top_speed: float) -> void:
 	state = GameState.LEVEL_COMPLETE
+	var before := score
 	score += SCORE_FINISH
+	_check_tier(before)  # the finish bonus can cross a tier too
 	_streak = 0
 	_combo_timer = 0.0
 	hud.set_score(score, 1, false)  # keep the corner label in sync with the panel
 	trail.set_state(score, 1)
+
+	# Per-level best time, kept in the same save file as the best score.
+	var cfg := ConfigFile.new()
+	cfg.load(SAVE_PATH)  # missing file is fine; starts empty
+	var key := "level_%d" % level
+	var prev: float = cfg.get_value("times", key, 0.0)
+	var is_record: bool = prev <= 0.0 or time < prev
+	if is_record:
+		cfg.set_value("times", key, time)
+		cfg.save(SAVE_PATH)
+
 	_save_best_if_beaten()
-	hud.show_level_complete(level, time, top_speed, score)
+	hud.show_level_complete(level, time, top_speed, score, prev, is_record)
 	_play_sfx(_sfx_finish)
 
 
@@ -226,9 +252,23 @@ func _add_score(points: int) -> void:
 		return
 	_streak += 1
 	_combo_timer = COMBO_WINDOW
+	var before := score
 	score += points * _combo_mult()
 	hud.set_score(score, _combo_mult(), true)
 	trail.set_state(score, _combo_mult())
+	_check_tier(before)
+
+
+## Crossing a trail color tier gets a chime (on its own player, so event
+## sfx in the same frame can't swallow it) and a nudge.
+func _check_tier(before: int) -> void:
+	for t in TIER_THRESHOLDS:
+		if before < t and score >= t:
+			_chime.stream = _sfx_finish
+			_chime.pitch_scale = 1.6
+			_chime.play()
+			camera_rig.add_shake(0.2)
+			break
 
 
 func _save_best_if_beaten() -> void:
@@ -237,6 +277,7 @@ func _save_best_if_beaten() -> void:
 	best_score = maxi(best_score, score)
 	best_level = maxi(best_level, level)
 	var cfg := ConfigFile.new()
+	cfg.load(SAVE_PATH)  # keep other sections (level times) intact
 	cfg.set_value("best", "score", best_score)
 	cfg.set_value("best", "level", best_level)
 	cfg.save(SAVE_PATH)
@@ -259,6 +300,10 @@ func _setup_audio() -> void:
 	_sfx = AudioStreamPlayer.new()
 	_sfx.volume_db = -8.0
 	add_child(_sfx)
+
+	_chime = AudioStreamPlayer.new()
+	_chime.volume_db = -10.0
+	add_child(_chime)
 	_sfx_hit = load("res://audio/sfx_hit.wav")
 	_sfx_jump = load("res://audio/sfx_jump.wav")
 	_sfx_finish = load("res://audio/sfx_finish.wav")

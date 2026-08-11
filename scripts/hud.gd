@@ -303,10 +303,16 @@ func set_score(total: int, mult: int, flash: bool) -> void:
 		_score_flash = 0.25
 
 
-func show_level_complete(level: int, time: float, top_speed: float, score: int) -> void:
+func show_level_complete(level: int, time: float, top_speed: float, score: int,
+		prev_best: float, is_record: bool) -> void:
 	running = false
-	results_label.text = "LEVEL %d COMPLETE!\n\nTime: %.1fs\nTop Speed: %d\nScore: %d\n\nPress R for level %d" \
-			% [level, time, int(top_speed * 3.6), score, level + 1]
+	var time_line := "Time: %.1fs" % time
+	if is_record and prev_best > 0.0:
+		time_line += "  NEW RECORD!"
+	elif prev_best > 0.0:
+		time_line += "  (best %.1fs)" % prev_best
+	results_label.text = "LEVEL %d COMPLETE!\n\n%s\nTop Speed: %d\nScore: %d\n\nPress R for level %d" \
+			% [level, time_line, int(top_speed * 3.6), score, level + 1]
 	results_layer.visible = true
 
 

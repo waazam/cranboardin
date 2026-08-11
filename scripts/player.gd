@@ -292,6 +292,18 @@ func apply_boost(duration: float = 1.8) -> void:
 		_boost_timer = maxf(_boost_timer, duration)
 
 
+## Called by launch ramps: a big assisted jump with the usual trick.
+func launch(vv: float) -> void:
+	if run_state != RunState.RUNNING:
+		return
+	_vertical_velocity = vv
+	height = maxf(height, 0.002)
+	_jump_buffer_timer = 0.0
+	_coyote_timer = 0.0
+	_start_trick()
+	jumped.emit()
+
+
 ## Smashing a zombie mid-boost stretches the boost window a little, so a
 ## lined-up horde can chain into a rampage.
 func extend_boost(amount: float) -> void:

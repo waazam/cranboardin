@@ -15,14 +15,14 @@ extends Node3D
 enum SpawnType { SIDE, AHEAD }
 
 const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
-const ACTIVATION_RANGE := 135.0
+const ACTIVATION_RANGE := 150.0
 const DESPAWN_BEHIND := 14.0
 const HIT_S_RANGE := 1.0
-const HIT_LATERAL_RANGE := 0.85
+const HIT_LATERAL_RANGE := 0.95
 const HIT_MAX_HEIGHT := 1.0
 
 @export var damage_per_hit: int = 26
-@export var base_count: int = 42
+@export var base_count: int = 48
 @export var count_per_level: int = 16
 
 var _track: Node3D
@@ -67,7 +67,7 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 			"s": spawn_s,
 			"lat": lat,
 			"type": type,
-			"shamble": _rng.randf_range(0.9, 1.5) + (level - 1) * 0.06,
+			"shamble": _rng.randf_range(1.6, 2.3) + (level - 1) * 0.1,
 		})
 
 
@@ -92,7 +92,7 @@ func _physics_process(delta: float) -> void:
 		var shamble: float = z["shamble"]
 		zlat = move_toward(zlat, clampf(_player.lateral, -half + 0.4, half - 0.4), shamble * delta)
 		if player_running and zs > _player.s:
-			zs = maxf(zs - 0.4 * delta, _player.s)
+			zs = maxf(zs - 1.2 * delta, _player.s)
 		z["s"] = zs
 		z["lat"] = zlat
 
@@ -132,7 +132,7 @@ func _activate(spawn: Dictionary) -> void:
 	var anim := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if anim:
 		anim.play(&"Walk")
-		anim.speed_scale = _rng.randf_range(0.6, 0.85)
+		anim.speed_scale = _rng.randf_range(0.95, 1.25)
 
 	_active.append({
 		"node": node,

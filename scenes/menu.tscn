@@ -1,0 +1,27 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/menu.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/sky_background.gd" id="2"]
+
+[node name="Menu" type="Node3D"]
+script = ExtResource("1")
+
+[node name="ViewportFrame" type="SubViewportContainer" parent="."]
+texture_filter = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+stretch = true
+stretch_shrink = 3
+
+[node name="SubViewport" type="SubViewport" parent="ViewportFrame"]
+own_world_3d = true
+handle_input_locally = false
+render_target_update_mode = 4
+
+[node name="Background" type="Node3D" parent="ViewportFrame/SubViewport"]
+script = ExtResource("2")
+
+[node name="World" type="Node3D" parent="ViewportFrame/SubViewport"]

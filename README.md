@@ -50,10 +50,15 @@ board rolls under you) and a **360 spin** (the whole rider spins).
 
 ```
 scenes/
-  main.tscn           Entry scene: pixelation viewport wrapping the 3D
+  menu.tscn           Entry scene: main menu -- the rider (sunglasses,
+                      board at his side) against the neon backdrop, with
+                      its own synth theme. Any input starts the game.
+  main.tscn           The game: pixelation viewport wrapping the 3D
                       world, plus the HUD.
   player.tscn         CharacterBody3D shell for the player rig.
 scripts/
+  menu.gd             Builds the menu scene in code (character, glasses,
+                      board, title UI, menu music).
   main.gd             Level loop (running / complete / game over), audio
                       stack, R-key handling.
   track.gd            Procedural curved road: wandering-heading downhill

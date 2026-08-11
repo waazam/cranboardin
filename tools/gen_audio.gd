@@ -30,6 +30,7 @@ func _init() -> void:
 	_save("res://audio/sfx_jump.wav", _gen_jump())
 	_save("res://audio/sfx_finish.wav", _gen_finish())
 	_save("res://audio/sfx_pickup.wav", _gen_pickup())
+	_save("res://audio/menu_music.wav", _gen_menu_music())
 	print("gen_audio: done")
 	quit(0)
 
@@ -58,72 +59,183 @@ func _noise() -> float:
 # --- Music ------------------------------------------------------------------
 
 func _gen_music() -> PackedFloat32Array:
-	var bpm := 112.0
-	var spb: int = int(SR * 60.0 / bpm)      # samples per beat
-	var total: int = spb * 32                # 8 bars of 4/4
+	# 16 bars at 100 BPM (~38s) with an actual arrangement, so it evolves
+	# instead of hammering every layer from bar one:
+	#   bars  1-4  A: warm pads + soft bass, sparse lead notes
+	#   bars  5-8  B: halftime kick + hats in, melody phrase 1
+	#   bars  9-12 C: full groove (kick/snare/hats), melody phrase 2 + ghost arp
+	#   bars 13-16 D: drums fall away, pads swell -- flows back into A
+	var bpm := 100.0
+	var spb: int = int(SR * 60.0 / bpm)
+	var total: int = spb * 4 * 16
 	var out := PackedFloat32Array()
 	out.resize(total)
 
-	# Chord progression: Am / F / C / G, two bars each... 8 beats each.
-	var bass_roots: Array[float] = [55.0, 43.65, 65.41, 49.0]         # A1 F1 C2 G1
+	# Am7 / Fmaj7 / Cmaj7 / G, two bars each, cycled twice.
+	var bass_roots: Array[float] = [55.0, 43.65, 65.41, 49.0]  # A1 F1 C2 G1
 	var chords: Array = [
-		[110.0, 130.81, 164.81],   # Am: A2 C3 E3
-		[87.31, 110.0, 130.81],    # F:  F2 A2 C3
-		[130.81, 164.81, 196.0],   # C:  C3 E3 G3
-		[98.0, 123.47, 146.83],    # G:  G2 B2 D3
+		[110.0, 130.81, 164.81, 196.0],    # Am7:   A2 C3 E3 G3
+		[87.31, 110.0, 130.81, 164.81],    # Fmaj7: F2 A2 C3 E3
+		[130.81, 164.81, 196.0, 246.94],   # Cmaj7: C3 E3 G3 B3
+		[98.0, 123.47, 146.83, 196.0],     # G:     G2 B2 D3 G3
 	]
 
+	# Two-bar melody phrases in A-minor pentatonic, one note slot per 8th
+	# (0 = rest). Rests are what keep it from being a loopy churn.
+	var phrase1: Array[float] = [440.0, 0.0, 523.25, 0.0, 659.26, 0.0, 587.33, 523.25,
+			440.0, 0.0, 0.0, 392.0, 440.0, 0.0, 0.0, 0.0]
+	var phrase2: Array[float] = [659.26, 0.0, 587.33, 523.25, 659.26, 0.0, 784.0, 0.0,
+			659.26, 587.33, 523.25, 0.0, 440.0, 0.0, 523.25, 0.0]
+
 	var pad_lp := 0.0
-	var pad_lp_k := 0.12
+	var pad_lp_k := 0.10
 
 	for i in total:
 		var t := float(i) / SR
 		var beat := float(i) / spb
-		var chord_idx: int = int(beat / 8.0) % 4
+		var bar: int = int(beat / 4.0)
+		var section: int = bar / 4  # 0..3
+		var chord_idx: int = (bar / 2) % 4
 		var chord: Array = chords[chord_idx]
 		var root: float = bass_roots[chord_idx]
 
-		# Bass: gated saw on 8th notes with per-note decay.
-		var eighth_pos := fmod(beat * 2.0, 1.0)
-		var bass_env := exp(-4.0 * eighth_pos)
-		var bass := (2.0 * fmod(root * t, 1.0) - 1.0) * bass_env * 0.32
+		var beat_pos := fmod(beat, 1.0)
+		var tb := beat_pos * 60.0 / bpm
+		var beat_in_bar: int = int(beat) % 4
 
-		# Pad: two detuned saws per chord tone, lowpassed.
+		# --- Pad: detuned saws over 7th-chord tones, lowpassed; ducks on
+		# each beat in the drum sections (sidechain pump), swells in D.
 		var pad := 0.0
 		for f in chord:
 			var fr: float = f
-			pad += (2.0 * fmod(fr * 0.998 * t, 1.0) - 1.0)
-			pad += (2.0 * fmod(fr * 1.002 * t, 1.0) - 1.0)
-		pad_lp += pad_lp_k * (pad / 6.0 - pad_lp)
-		var pad_out := pad_lp * 0.22
+			pad += (2.0 * fmod(fr * 0.997 * t, 1.0) - 1.0)
+			pad += (2.0 * fmod(fr * 1.003 * t, 1.0) - 1.0)
+		pad_lp += pad_lp_k * (pad / 8.0 - pad_lp)
+		var pad_gain := 0.24 if section == 0 or section == 3 else 0.19
+		var pump := 1.0
+		if section == 1 or section == 2:
+			pump = 1.0 - 0.35 * exp(-5.0 * tb)
+		var pad_out := pad_lp * pad_gain * pump
 
-		# Arp: square-wave 16ths cycling chord tones an octave up.
-		var sixteenth: int = int(beat * 4.0)
-		var arp_freq: float = chord[sixteenth % 3] * 2.0
-		var arp_pos := fmod(beat * 4.0, 1.0)
-		var arp_env := exp(-6.0 * arp_pos)
-		var arp := (1.0 if fmod(arp_freq * t, 1.0) < 0.5 else -1.0) * arp_env * 0.10
+		# --- Bass: saw+sine blend, 8th notes, soft in the intro.
+		var eighth_pos := fmod(beat * 2.0, 1.0)
+		var bass_env := exp(-3.0 * eighth_pos)
+		var bass_wave := (2.0 * fmod(root * t, 1.0) - 1.0) * 0.6 + sin(TAU * root * t) * 0.4
+		var bass := bass_wave * bass_env * (0.2 if section == 0 else 0.3)
 
-		# Drums.
-		var beat_pos := fmod(beat, 1.0)
-		var tb := beat_pos * 60.0 / bpm
-		var kick := sin(TAU * tb * (50.0 + 60.0 * exp(-tb * 25.0))) * exp(-9.0 * tb) * 0.5
+		# --- Lead: chip melody with vibrato, phrased with rests.
+		var slot: int = int(fmod(beat, 8.0) * 2.0)
+		var lead := 0.0
+		var lead_freq := 0.0
+		if section == 1:
+			lead_freq = phrase1[slot]
+		elif section == 2:
+			lead_freq = phrase2[slot]
+		elif section == 0 and slot % 4 == 0:
+			lead_freq = phrase1[slot] * 0.5  # sparse low echoes of the theme
+		if lead_freq > 0.0:
+			var slot_pos := fmod(beat * 2.0, 1.0)
+			var vib := 1.0 + 0.007 * sin(TAU * 5.5 * t)
+			var sq := 1.0 if fmod(lead_freq * vib * t, 1.0) < 0.5 else -1.0
+			lead = sq * exp(-2.5 * slot_pos) * 0.11
+
+		# --- Ghost arp: quiet 16ths, section C only, for motion under the lead.
+		var arp := 0.0
+		if section == 2:
+			var sixteenth: int = int(beat * 4.0)
+			var arp_freq: float = chord[sixteenth % 4] * 2.0
+			var arp_pos := fmod(beat * 4.0, 1.0)
+			arp = (1.0 if fmod(arp_freq * t, 1.0) < 0.5 else -1.0) * exp(-7.0 * arp_pos) * 0.045
+
+		# --- Drums, by section.
+		var kick := 0.0
 		var snare := 0.0
-		var beat_in_bar: int = int(beat) % 4
-		if beat_in_bar == 1 or beat_in_bar == 3:
-			snare = _noise() * exp(-14.0 * tb) * 0.28
-		var hat_pos := fmod(beat * 2.0, 1.0) * 60.0 / bpm
-		var hat := _noise() * exp(-70.0 * hat_pos) * 0.12
+		var hat := 0.0
+		var kick_on := false
+		if section == 1:
+			kick_on = beat_in_bar == 0 or beat_in_bar == 2  # halftime
+		elif section == 2:
+			kick_on = true
+		elif section == 3:
+			kick_on = beat_in_bar == 0 and bar == 12  # one last downbeat
+		if kick_on:
+			kick = sin(TAU * tb * (48.0 + 55.0 * exp(-tb * 22.0))) * exp(-8.0 * tb) * 0.5
+		if section == 2 and (beat_in_bar == 1 or beat_in_bar == 3):
+			snare = _noise() * exp(-13.0 * tb) * 0.24
+		if section == 1 or section == 2:
+			var hat_pos := fmod(beat * 2.0, 1.0) * 60.0 / bpm
+			hat = _noise() * exp(-75.0 * hat_pos) * (0.1 if section == 2 else 0.07)
 
-		var v := bass + pad_out + arp + kick + snare + hat
-		# Gentle edge fades mask the loop seam (kick on beat 1 covers it).
+		var v := pad_out + bass + lead + arp + kick + snare + hat
+		# Edge fades mask the loop seam; D's bare pads hand off into A.
 		var fade := 1.0
-		var edge: int = int(SR * 0.04)
+		var edge: int = int(SR * 0.05)
 		if i < edge:
 			fade = float(i) / edge
 		elif i > total - edge:
 			fade = float(total - i) / edge
-		out[i] = tanh(v * 1.2) * 0.85 * fade
+		out[i] = tanh(v * 1.15) * 0.85 * fade
+
+	return out
+
+
+func _gen_menu_music() -> PackedFloat32Array:
+	# Menu theme: dreamier and slower than the game track. 8 bars at 84
+	# BPM, Am7 / Fmaj7 / Dm7 / E, breathing pads with per-chord swells, a
+	# lazy quarter-note arp, and a high shimmer -- no drums.
+	var bpm := 84.0
+	var spb: int = int(SR * 60.0 / bpm)
+	var total: int = spb * 4 * 8
+	var out := PackedFloat32Array()
+	out.resize(total)
+
+	var chords: Array = [
+		[110.0, 130.81, 164.81, 196.0],     # Am7
+		[87.31, 110.0, 130.81, 164.81],     # Fmaj7
+		[73.42, 146.83, 174.61, 220.0],     # Dm7
+		[82.41, 123.47, 164.81, 207.65],    # E (with G#)
+	]
+
+	var pad_lp := 0.0
+
+	for i in total:
+		var t := float(i) / SR
+		var beat := float(i) / spb
+		var bar: int = int(beat / 4.0)
+		var chord_idx: int = (bar / 2) % 4
+		var chord: Array = chords[chord_idx]
+
+		# Swell each 2-bar chord in over ~0.8s so the pads breathe.
+		var chord_pos := fmod(beat, 8.0) * 60.0 / bpm
+		var swell: float = clampf(chord_pos / 0.8, 0.0, 1.0)
+
+		var pad := 0.0
+		for f in chord:
+			var fr: float = f
+			pad += (2.0 * fmod(fr * 0.996 * t, 1.0) - 1.0)
+			pad += (2.0 * fmod(fr * 1.004 * t, 1.0) - 1.0)
+		pad_lp += 0.08 * (pad / 8.0 - pad_lp)
+		var pad_out := pad_lp * 0.3 * swell
+
+		# Lazy arp: one chord tone per quarter note, an octave up, sine
+		# with a soft second harmonic.
+		var quarter: int = int(beat)
+		var arp_freq: float = chord[quarter % 4] * 2.0
+		var arp_pos := fmod(beat, 1.0)
+		var arp_env := exp(-2.2 * arp_pos)
+		var arp := (sin(TAU * arp_freq * t) * 0.8 + sin(TAU * arp_freq * 2.0 * t) * 0.15) * arp_env * 0.1
+
+		# High shimmer: chord root two octaves up, tremolo, very quiet.
+		var shimmer := sin(TAU * chord[1] * 4.0 * t) * (0.5 + 0.5 * sin(TAU * 0.7 * t)) * 0.03
+
+		var v := pad_out + arp + shimmer
+		var fade := 1.0
+		var edge: int = int(SR * 0.06)
+		if i < edge:
+			fade = float(i) / edge
+		elif i > total - edge:
+			fade = float(total - i) / edge
+		out[i] = tanh(v * 1.1) * 0.85 * fade
 
 	return out
 

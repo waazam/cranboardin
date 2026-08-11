@@ -1,5 +1,7 @@
 # cranboardin
 
+**[▶ Play it in your browser](https://waazam.github.io/cranboardin/)**
+
 A third-person downhill skating prototype built in Godot 4.7. Skate down a
 long hillside street toward a distant city skyline, picking up speed as you
 descend, dodging (or jumping) obstacles along the way.

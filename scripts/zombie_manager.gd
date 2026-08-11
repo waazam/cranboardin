@@ -25,9 +25,9 @@ const HIT_LATERAL_RANGE := 0.95
 const HIT_MAX_HEIGHT := 1.0
 const NEAR_MISS_RANGE := 2.4
 
-@export var damage_per_hit: int = 26
-@export var base_count: int = 70
-@export var count_per_level: int = 22
+@export var damage_per_hit: int = 34  # three hits without healing ends the run
+@export var base_count: int = 78
+@export var count_per_level: int = 24
 
 var _track: Node3D
 var _player: Node3D
@@ -57,27 +57,37 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	_smashed.clear()
 	_next_spawn = 0
 
+	# Placement is fully random over the run (sorted afterwards for the
+	# activation cursor): clumps and dead stretches emerge naturally, and
+	# ~30% of rolls drop a tight pack of 2-4 -- a mini-horde to jump,
+	# thread, or bowl through on a boost.
 	_rng.seed = 5000 + level * 4409
 	_spawns.clear()
 	var count: int = base_count + (level - 1) * count_per_level
-	var start_s := 90.0
+	var start_s := 70.0
 	var end_s: float = track.arc_length - 40.0
-	var spacing := (end_s - start_s) / float(count)
 	var half: float = track.road_width * 0.5
-	for i in count:
-		var spawn_s := start_s + spacing * i + _rng.randf_range(0.0, spacing * 0.5)
-		var type := SpawnType.SIDE if _rng.randf() < 0.55 else SpawnType.AHEAD
-		var lat: float
-		if type == SpawnType.SIDE:
-			lat = (half + 1.5) * (1.0 if _rng.randf() < 0.5 else -1.0)
-		else:
-			lat = _rng.randf_range(-half + 1.5, half - 1.5)
-		_spawns.append({
-			"s": spawn_s,
-			"lat": lat,
-			"type": type,
-			"shamble": _rng.randf_range(1.6, 2.3) + (level - 1) * 0.1,
-		})
+	var placed := 0
+	while placed < count:
+		var pack: int = 1 if _rng.randf() < 0.7 else _rng.randi_range(2, 4)
+		pack = mini(pack, count - placed)
+		var center := _rng.randf_range(start_s, end_s)
+		for i in pack:
+			var spawn_s := clampf(center + _rng.randf_range(-6.0, 6.0), start_s, end_s)
+			var type := SpawnType.SIDE if _rng.randf() < 0.45 else SpawnType.AHEAD
+			var lat: float
+			if type == SpawnType.SIDE:
+				lat = (half + 1.5) * (1.0 if _rng.randf() < 0.5 else -1.0)
+			else:
+				lat = _rng.randf_range(-half + 1.5, half - 1.5)
+			_spawns.append({
+				"s": spawn_s,
+				"lat": lat,
+				"type": type,
+				"shamble": _rng.randf_range(1.9, 2.7) + (level - 1) * 0.12,
+			})
+			placed += 1
+	_spawns.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["s"] < b["s"])
 
 
 func _physics_process(delta: float) -> void:
@@ -101,7 +111,7 @@ func _physics_process(delta: float) -> void:
 		var shamble: float = z["shamble"]
 		zlat = move_toward(zlat, clampf(_player.lateral, -half + 0.4, half - 0.4), shamble * delta)
 		if player_running and zs > _player.s:
-			zs = maxf(zs - 1.2 * delta, _player.s)
+			zs = maxf(zs - 1.5 * delta, _player.s)
 		z["s"] = zs
 		z["lat"] = zlat
 

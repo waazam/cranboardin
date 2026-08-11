@@ -22,8 +22,8 @@ const HIT_LATERAL_RANGE := 0.95
 const HIT_MAX_HEIGHT := 1.0
 
 @export var damage_per_hit: int = 26
-@export var base_count: int = 48
-@export var count_per_level: int = 16
+@export var base_count: int = 70
+@export var count_per_level: int = 22
 
 var _track: Node3D
 var _player: Node3D

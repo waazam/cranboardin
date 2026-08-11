@@ -42,6 +42,7 @@ const SCORE_OVER := 200
 const SCORE_NEAR := 75
 const SCORE_BOOST := 50
 const SCORE_SMASH := 125
+const SCORE_RAMPAGE := 300  # every 3rd smash chained inside one boost
 const SCORE_FINISH := 500
 
 var score: int = 0
@@ -50,6 +51,7 @@ var best_level: int = 1
 var _streak: int = 0
 var _combo_timer: float = 0.0
 var _level_start_score: int = 0
+var _smash_chain: int = 0
 
 var _music: AudioStreamPlayer
 var _wind: AudioStreamPlayer
@@ -101,6 +103,7 @@ func _start_level() -> void:
 	hud.reset(level)
 	_streak = 0
 	_combo_timer = 0.0
+	_smash_chain = 0
 	hud.set_score(score, 1, false)
 	trail.set_state(score, 1)
 
@@ -110,6 +113,10 @@ func _process(delta: float) -> void:
 	var ratio: float = player.get_speed_ratio() if state == GameState.RUNNING else 0.0
 	_wind.volume_db = lerpf(-42.0, -13.0, ratio)
 	_wind.pitch_scale = 0.85 + ratio * 0.5
+
+	# A smash chain only lives as long as its boost.
+	if _smash_chain > 0 and not player.is_boosting():
+		_smash_chain = 0
 
 	# Combo lapses if nothing scored inside the window.
 	if _combo_timer > 0.0:
@@ -142,6 +149,7 @@ func _advance_or_restart() -> void:
 
 func _on_player_damaged(_health: int) -> void:
 	_play_sfx(_sfx_hit)
+	camera_rig.add_shake(0.45)
 	# Taking a hit drops the combo.
 	_streak = 0
 	_combo_timer = 0.0
@@ -175,11 +183,18 @@ func _on_zombie_passed(kind: String) -> void:
 func _on_zombie_smashed() -> void:
 	_add_score(SCORE_SMASH)
 	_play_sfx(_sfx_hit, 1.5)  # pitched-up crunch, distinct from taking damage
+	camera_rig.add_shake(0.15)
+	player.extend_boost(0.35)
+	_smash_chain += 1
+	if _smash_chain % 3 == 0:
+		_add_score(SCORE_RAMPAGE)
+		camera_rig.add_shake(0.3)
 
 
 func _on_boost() -> void:
 	_add_score(SCORE_BOOST)
 	_play_sfx(_sfx_pickup, 1.6)
+	_smash_chain = 0  # a fresh pad starts a fresh chain
 
 
 func _on_pickup_collected(_health: int) -> void:

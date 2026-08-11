@@ -289,7 +289,14 @@ func _update_trick(delta: float, grounded: bool) -> void:
 ## Called by boost pads: a short burst of extra target speed.
 func apply_boost(duration: float = 1.8) -> void:
 	if run_state == RunState.RUNNING:
-		_boost_timer = duration
+		_boost_timer = maxf(_boost_timer, duration)
+
+
+## Smashing a zombie mid-boost stretches the boost window a little, so a
+## lined-up horde can chain into a rampage.
+func extend_boost(amount: float) -> void:
+	if _boost_timer > 0.0:
+		_boost_timer = minf(_boost_timer + amount, 2.5)
 
 
 func is_boosting() -> bool:

@@ -14,6 +14,14 @@ extends Node3D
 var target  # assigned by Main; left untyped for duck-typed property access
 var camera: Camera3D
 
+var _shake: float = 0.0
+var _shake_rng := RandomNumberGenerator.new()
+
+
+## Impact shake: jitters the camera locally (screen-space) and decays fast.
+func add_shake(amount: float) -> void:
+	_shake = minf(_shake + amount, 0.6)
+
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -37,6 +45,10 @@ func _physics_process(delta: float) -> void:
 	if target.has_method("is_boosting") and target.is_boosting():
 		target_fov += 7.0  # boost pads punch the FOV out a touch
 	camera.fov = lerpf(camera.fov, target_fov, clampf(9.0 * delta, 0.0, 1.0))
+
+	_shake = maxf(_shake - 2.2 * delta, 0.0)
+	camera.position = Vector3(_shake_rng.randf_range(-1.0, 1.0),
+			_shake_rng.randf_range(-1.0, 1.0), 0.0) * _shake * 0.35
 
 
 func snap_to_target() -> void:

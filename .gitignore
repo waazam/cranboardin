@@ -4,7 +4,6 @@
 
 # Export builds
 /builds/
-export_presets.cfg
 
 # OS / editor cruft
 .DS_Store

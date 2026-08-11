@@ -1,51 +1,61 @@
 extends CharacterBody3D
-## Third-person skater controller.
+## Spline-space skater controller. The player's gameplay state is
+## (s, lateral, height): distance down the road, offset across it, and
+## height above the surface. Each tick that state is mapped to a world
+## transform through Track.transform_at, so the player follows the curved
+## road exactly -- no physics solves, no wall collisions to tune.
 ##
-## Forward/downhill motion is speed-driven (not emergent slope physics) so the
-## "gains speed toward the bottom" pacing can be tuned precisely: current_speed
-## ramps from base_speed to max_speed as a function of progress down the hill.
-## WASD steers/accelerates/brakes; Space jumps (with coyote time + jump buffering).
+## Speed still ramps from base_speed to max_speed with progress down the
+## hill; WASD steers/accelerates/brakes and Space jumps (with coyote time
+## and jump buffering). Zombies call take_damage(); at zero health the
+## run ends (Death01 + died signal). Reaching the end of the road emits
+## finished.
 
-signal crashed(count: int)
-signal boosted()
-signal finished(time: float, top_speed: float, crashes: int)
+signal damaged(health: int)
+signal died()
+signal jumped()
+signal finished(time: float, top_speed: float)
+
+enum RunState { RUNNING, DEAD, FINISHED }
 
 # --- Tuning ---------------------------------------------------------------
-@export var base_speed: float = 6.0
-@export var max_speed: float = 26.0
-@export var accel_boost: float = 4.0        # extra target speed while holding W
-@export var brake_strength: float = 7.0     # target speed reduction while holding S
-@export var speed_response: float = 12.0    # how fast current_speed chases target_speed
-@export var steer_speed: float = 9.0        # lateral units/sec at full A/D
+@export var base_speed: float = 7.0
+@export var max_speed: float = 27.0
+@export var accel_boost: float = 4.0
+@export var brake_strength: float = 7.0
+@export var speed_response: float = 12.0
+@export var steer_speed: float = 9.0
 @export var steer_response: float = 30.0
 @export var jump_velocity: float = 8.5
-@export var boost_velocity: float = 11.0
 @export var gravity: float = 22.0
-@export var crash_speed_multiplier: float = 0.4
-@export var invulnerable_duration: float = 1.0
+@export var max_health: int = 100
+@export var overheal_cap: int = 150
+@export var hit_speed_multiplier: float = 0.45
+@export var invulnerable_duration: float = 1.3
 @export var coyote_time: float = 0.12
 @export var jump_buffer_time: float = 0.12
 
-# --- Track reference data (assigned by Track via setup()) -----------------
-var forward_tangent: Vector3 = Vector3(0, -0.25, -0.97)
-var track_length: float = 400.0
-var track_half_width: float = 6.0
-var start_position: Vector3 = Vector3.ZERO
+# --- Spline-space state -----------------------------------------------------
+var s: float = 0.0
+var lateral: float = 0.0
+var height: float = 0.0
+var _vertical_velocity: float = 0.0
 
-# --- Runtime state ----------------------------------------------------------
 var current_speed: float = 0.0
-var crash_count: int = 0
+var health: int = 100
 var top_speed: float = 0.0
 var elapsed: float = 0.0
-var run_finished: bool = false
+var run_state: RunState = RunState.RUNNING
 
+var _track: Node3D
 var _invulnerable_timer: float = 0.0
 var _coyote_timer: float = 0.0
 var _jump_buffer_timer: float = 0.0
 var _lateral_velocity: float = 0.0
+var _lean_amount: float = 0.0
 
-## Visual rig: `visuals` is the lean/blink pivot; the board and rider are
-## two separate entities beneath it (see skateboard.gd / character.gd).
+## Visual rig: `visuals` is the tuck/blink pivot; board and rider are
+## separate entities beneath it (skateboard.gd / character.gd).
 var visuals: Node3D
 var skateboard: Skateboard
 var character: Character
@@ -68,56 +78,68 @@ func _ready() -> void:
 
 
 func setup(track: Node3D) -> void:
-	forward_tangent = track.forward_tangent
-	track_length = track.track_length
-	track_half_width = track.track_width * 0.5 - 0.6
-	start_position = track.start_position
+	_track = track
 	reset_run()
 
 
 func reset_run() -> void:
-	global_position = start_position
-	velocity = Vector3.ZERO
+	s = 0.0
+	lateral = 0.0
+	height = 0.0
+	_vertical_velocity = 0.0
 	current_speed = base_speed
-	crash_count = 0
+	health = max_health
 	top_speed = base_speed
 	elapsed = 0.0
-	run_finished = false
+	run_state = RunState.RUNNING
 	_invulnerable_timer = 0.0
 	_lateral_velocity = 0.0
+	_lean_amount = 0.0
 	visuals.visible = true
 	visuals.rotation = Vector3.ZERO
+	skateboard.rotation = Vector3.ZERO
 	character.reset()
+	_apply_transform()
 
 
 func get_progress() -> float:
-	var end_z := forward_tangent.z * track_length
-	if is_zero_approx(end_z):
+	if _track == null or _track.arc_length <= 0.0:
 		return 0.0
-	return clamp(global_position.z / end_z, 0.0, 1.0)
+	return clampf(s / _track.arc_length, 0.0, 1.0)
 
 
 func get_speed_ratio() -> float:
-	return clamp(current_speed / max_speed, 0.0, 1.0)
+	return clampf(current_speed / max_speed, 0.0, 1.0)
 
 
-func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_SPACE:
+var _jump_held_prev: bool = false
+
+
+## Polled (not event-driven) so it works identically inside the pixelation
+## SubViewport, where input events don't reliably propagate.
+func _poll_jump_input() -> void:
+	var jump_held := Input.is_physical_key_pressed(KEY_SPACE)
+	if jump_held and not _jump_held_prev:
 		_jump_buffer_timer = jump_buffer_time
+	_jump_held_prev = jump_held
 
 
 func _physics_process(delta: float) -> void:
-	if run_finished:
-		velocity.y -= gravity * delta
-		velocity.x = move_toward(velocity.x, 0.0, 20.0 * delta)
-		velocity.z = move_toward(velocity.z, 0.0, 8.0 * delta)
-		move_and_slide()
+	if _track == null:
+		return
+	if run_state != RunState.RUNNING:
+		# Dead: frozen. Finished: glide to a stop past the line.
+		if run_state == RunState.FINISHED and current_speed > 0.1:
+			current_speed = move_toward(current_speed, 0.0, 9.0 * delta)
+			s = minf(s + current_speed * delta, _track.arc_length)
+			_apply_transform()
 		return
 
 	elapsed += delta
 	_update_invulnerability(delta)
+	_poll_jump_input()
 
-	var grounded := is_on_floor()
+	var grounded := height <= 0.001
 	_coyote_timer = coyote_time if grounded else _coyote_timer - delta
 	_jump_buffer_timer -= delta
 
@@ -125,30 +147,35 @@ func _physics_process(delta: float) -> void:
 	_update_speed(delta)
 	_lateral_velocity = move_toward(_lateral_velocity, steer_input * steer_speed, steer_response * delta)
 
-	var wants_jump := _jump_buffer_timer > 0.0 and _coyote_timer > 0.0
-	if wants_jump:
-		velocity.y = jump_velocity
+	if _jump_buffer_timer > 0.0 and _coyote_timer > 0.0:
+		_vertical_velocity = jump_velocity
+		height = maxf(height, 0.002)
 		_jump_buffer_timer = 0.0
 		_coyote_timer = 0.0
-	elif grounded:
-		var tangent_velocity := forward_tangent * current_speed
-		velocity.y = tangent_velocity.y
-		velocity.z = tangent_velocity.z
+		jumped.emit()
+	elif not grounded:
+		_vertical_velocity -= gravity * delta
 	else:
-		velocity.y -= gravity * delta
-		velocity.z = forward_tangent.z * current_speed
+		_vertical_velocity = 0.0
+		height = 0.0
 
-	velocity.x = _lateral_velocity
+	height = maxf(height + _vertical_velocity * delta, 0.0)
+	s += current_speed * delta
+	lateral = clampf(lateral + _lateral_velocity * delta,
+			-_track.road_width * 0.5 + 0.7, _track.road_width * 0.5 - 0.7)
 
-	move_and_slide()
-	global_position.x = clamp(global_position.x, -track_half_width, track_half_width)
-
+	_apply_transform()
 	_update_lean(steer_input, delta)
 	skateboard.update_roll(current_speed, delta)
-	character.update_motion(is_on_floor())
+	character.update_motion(height <= 0.001)
 
-	if get_progress() >= 1.0:
+	if s >= _track.arc_length:
 		_finish()
+
+
+func _apply_transform() -> void:
+	var xf: Transform3D = _track.transform_at(s, lateral)
+	global_transform = Transform3D(xf.basis, xf.origin + xf.basis.y * height)
 
 
 func _steer_axis() -> float:
@@ -160,16 +187,16 @@ func _steer_axis() -> float:
 	return axis
 
 
-func _update_speed(_delta: float) -> void:
+func _update_speed(delta: float) -> void:
 	var target_speed: float = lerp(base_speed, max_speed, get_progress())
 	if Input.is_physical_key_pressed(KEY_W):
 		target_speed += accel_boost
 	if Input.is_physical_key_pressed(KEY_S):
 		target_speed -= brake_strength
-	target_speed = clamp(target_speed, base_speed * 0.5, max_speed + accel_boost)
-	current_speed = move_toward(current_speed, target_speed, speed_response * _delta)
-	current_speed = max(current_speed, 1.0)
-	top_speed = max(top_speed, current_speed)
+	target_speed = clampf(target_speed, base_speed * 0.5, max_speed + accel_boost)
+	current_speed = move_toward(current_speed, target_speed, speed_response * delta)
+	current_speed = maxf(current_speed, 1.0)
+	top_speed = maxf(top_speed, current_speed)
 
 
 func _update_invulnerability(delta: float) -> void:
@@ -180,35 +207,51 @@ func _update_invulnerability(delta: float) -> void:
 		visuals.visible = true
 
 
+## Steering lean: the board rolls into the carve and the rider's spine
+## bends into it (via LeanModifier); the rig itself only pitches into a
+## speed tuck.
 func _update_lean(steer_input: float, delta: float) -> void:
-	var target_roll := -steer_input * 0.35
-	var target_pitch := -0.12 - get_speed_ratio() * 0.18
-	visuals.rotation.z = lerp_angle(visuals.rotation.z, target_roll, 10.0 * delta)
+	_lean_amount = lerpf(_lean_amount, steer_input, 10.0 * delta)
+	skateboard.rotation.z = -_lean_amount * 0.22
+	character.set_lean(_lean_amount * 0.45)
+	var target_pitch := -0.1 - get_speed_ratio() * 0.15
 	visuals.rotation.x = lerp_angle(visuals.rotation.x, target_pitch, 6.0 * delta)
 
 
-## Called by hazard obstacles (Area3D) when the player enters them.
-func register_crash() -> void:
-	if run_finished or _invulnerable_timer > 0.0:
+## Called by cranberry bottle pickups. Heals to max; if already at or
+## above max, overheals up to overheal_cap.
+func heal(amount: int) -> void:
+	if run_state != RunState.RUNNING:
 		return
-	crash_count += 1
-	current_speed = max(base_speed * 0.6, current_speed * crash_speed_multiplier)
+	health = mini(health + amount, overheal_cap)
+
+
+## Called by zombies on contact.
+func take_damage(amount: int) -> void:
+	if run_state != RunState.RUNNING or _invulnerable_timer > 0.0:
+		return
+	health = maxi(health - amount, 0)
+	current_speed = maxf(base_speed * 0.6, current_speed * hit_speed_multiplier)
 	_lateral_velocity *= 0.2
 	_invulnerable_timer = invulnerable_duration
-	character.play_crash()
-	crashed.emit(crash_count)
+	if health <= 0:
+		_die()
+	else:
+		character.play_crash()
+		damaged.emit(health)
 
 
-## Called by boost-ramp obstacles (Area3D) when the player enters them.
-func apply_boost() -> void:
-	if run_finished:
-		return
-	velocity.y = boost_velocity
-	_coyote_timer = 0.0
-	boosted.emit()
+func _die() -> void:
+	run_state = RunState.DEAD
+	visuals.visible = true
+	character.set_lean(0.0)
+	character.play_death()
+	damaged.emit(0)
+	died.emit()
 
 
 func _finish() -> void:
-	run_finished = true
+	run_state = RunState.FINISHED
+	character.set_lean(0.0)
 	character.play_finish()
-	finished.emit(elapsed, top_speed, crash_count)
+	finished.emit(elapsed, top_speed)

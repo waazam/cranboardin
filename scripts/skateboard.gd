@@ -24,13 +24,36 @@ func _ready() -> void:
 
 
 func _build() -> void:
+	var deck_mat := _flat_material(deck_color)
 	var deck := MeshInstance3D.new()
 	var deck_mesh := BoxMesh.new()
 	deck_mesh.size = Vector3(0.26, 0.05, 0.85)
 	deck.mesh = deck_mesh
 	deck.position = Vector3(0, DECK_TOP_HEIGHT - 0.025, 0)
-	deck.material_override = _flat_material(deck_color)
+	deck.material_override = deck_mat
 	add_child(deck)
+
+	# Kicktails: short upward-angled nose/tail sections.
+	for z_dir in [-1.0, 1.0]:
+		var tail := MeshInstance3D.new()
+		var tail_mesh := BoxMesh.new()
+		tail_mesh.size = Vector3(0.24, 0.045, 0.16)
+		tail.mesh = tail_mesh
+		tail.position = Vector3(0, DECK_TOP_HEIGHT - 0.01, z_dir * 0.49)
+		tail.rotation.x = -z_dir * 0.42
+		tail.material_override = deck_mat
+		add_child(tail)
+
+	# Grip tape: near-black thin sheet on top of the deck.
+	var grip := MeshInstance3D.new()
+	var grip_mesh := BoxMesh.new()
+	grip_mesh.size = Vector3(0.24, 0.006, 0.8)
+	grip.mesh = grip_mesh
+	grip.position = Vector3(0, DECK_TOP_HEIGHT + 0.004, 0)
+	var grip_mat := _flat_material(Color(0.05, 0.05, 0.06))
+	grip_mat.roughness = 1.0
+	grip.material_override = grip_mat
+	add_child(grip)
 
 	var truck_mat := _flat_material(Color(0.6, 0.6, 0.65))
 	var wheel_mat := _flat_material(wheel_color)

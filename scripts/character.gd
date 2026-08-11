@@ -28,8 +28,9 @@ const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
 
 var _model: Node3D
 var _anim: AnimationPlayer
+var _lean_modifier: LeanModifier
 var _current: StringName = &""
-## While true (crash/finish anims), update_motion() is ignored.
+## While true (crash/finish/death anims), update_motion() is ignored.
 var _locked: bool = false
 
 
@@ -46,6 +47,16 @@ func _ready() -> void:
 	_anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	assert(_anim != null, "AnimationLibrary GLB is missing its AnimationPlayer")
 	_anim.animation_finished.connect(_on_animation_finished)
+
+	# Post-animation spine lean (see lean_modifier.gd). The travel-forward
+	# axis in the model's space depends on the stance rotation applied above.
+	var skeleton := _model.find_child("Skeleton3D", true, false) as Skeleton3D
+	if skeleton:
+		_lean_modifier = LeanModifier.new()
+		var model_yaw := PI - deg_to_rad(stance_angle_deg)
+		_lean_modifier.axis = Vector3(sin(model_yaw), 0.0, -cos(model_yaw))
+		skeleton.add_child(_lean_modifier)
+
 	_play(&"Crouch_Idle", 0.0)
 
 
@@ -71,8 +82,21 @@ func play_finish() -> void:
 	_anim.play(&"Dance", 0.3)
 
 
+func play_death() -> void:
+	_locked = true
+	_current = &"Death01"
+	_anim.play(&"Death01", 0.2)
+
+
+## Steering lean, blended into the spine bones (radians; + leans right).
+func set_lean(lean: float) -> void:
+	if _lean_modifier:
+		_lean_modifier.lean = lean
+
+
 func reset() -> void:
 	_locked = false
+	set_lean(0.0)
 	_play(&"Crouch_Idle", 0.0)
 
 

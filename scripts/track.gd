@@ -1,203 +1,263 @@
 extends Node3D
-## Builds the downhill course: a single long tilted ramp (StaticBody3D),
-## side boundary walls, a finish banner, and a fair, lane-based scattering
-## of obstacles. Everything is generated in code -- no imported meshes.
+## Procedural curved downhill road.
 ##
-## Local convention: the ramp's own local space runs from z=0 (top/start)
-## to z=-track_length (bottom/finish), with local y=0 being the ramp's top
-## surface. Obstacles are placed in that local space, then converted to
-## world space through ramp_body's transform so the slope tilt is applied
-## automatically.
+## The centerline is generated as a heading that wanders via two summed
+## sine curvatures (gentle S-bends, turn radius >= ~100m) while descending
+## at a constant grade. The road ribbon, curbs, dashes, finish banner, and
+## roadside scenery are all built along that curve with SurfaceTool /
+## primitives -- no physics bodies. The player and zombies never collide
+## with geometry; they live in "spline space" (distance s along the road,
+## lateral offset) and query transform_at(s, lateral) for their world
+## transform, which guarantees they follow the curve exactly.
+##
+## generate(level) can be called repeatedly; each level reseeds the curve
+## and lengthens the run.
 
-const OBSTACLE_SCENE := preload("res://scenes/obstacle.tscn")
+const SAMPLE_STEP := 4.0
 
-@export var track_length: float = 380.0
-@export var track_width: float = 14.0
-@export var slope_angle_deg: float = 13.0
-@export var obstacle_count: int = 42
-@export var lane_count: int = 3
+@export var road_width: float = 14.0
+@export var slope_angle_deg: float = 9.0
+@export var base_length: float = 1350.0
+@export var length_per_level: float = 220.0
 
-var ramp_thickness: float = 2.0
-var overrun: float = 25.0
-## Extra ramp behind the start line, so the camera never sees the slab's
-## raw cut face during the opening frames.
-var back_overrun: float = 30.0
+var arc_length: float = 0.0
+var start_position: Vector3 = Vector3.ZERO
 
-## Public data consumed by Player.setup().
-var forward_tangent: Vector3
-var start_position: Vector3
-
-var ramp_body: StaticBody3D
-var obstacles_root: Node3D
+var _points: PackedVector3Array = PackedVector3Array()
+var _forwards: PackedVector3Array = PackedVector3Array()
+var _geometry: Node3D
 var _rng := RandomNumberGenerator.new()
 
 
-func _ready() -> void:
-	_build_ramp()
-	_build_boundaries()
+func generate(level: int) -> void:
+	if _geometry:
+		_geometry.queue_free()
+	_geometry = Node3D.new()
+	_geometry.name = "Geometry"
+	add_child(_geometry)
+
+	_rng.seed = 1000 + level * 7919
+	arc_length = base_length + (level - 1) * length_per_level
+
+	_build_centerline()
+	_build_road()
+	_build_dashes()
 	_build_finish_banner()
 	_build_scenery()
-	_spawn_obstacles()
+
+	start_position = transform_at(0.0, 0.0).origin
 
 
-func regenerate_obstacles() -> void:
-	_spawn_obstacles()
+## World transform at distance s down the road, offset laterally (+ = right).
+## basis: X = right across the road, Y = road surface normal, -Z = downhill.
+func transform_at(s: float, lateral: float) -> Transform3D:
+	s = clampf(s, 0.0, arc_length)
+	var idx: int = mini(int(s / SAMPLE_STEP), _points.size() - 2)
+	var t := (s - idx * SAMPLE_STEP) / SAMPLE_STEP
+	var pos := _points[idx].lerp(_points[idx + 1], t)
+	var fwd := _forwards[idx].lerp(_forwards[idx + 1], t).normalized()
+	var side := fwd.cross(Vector3.UP).normalized()
+	var up := side.cross(fwd).normalized()
+	return Transform3D(Basis(side, up, -fwd), pos + side * lateral)
 
 
-func _build_ramp() -> void:
-	var slope_rad := deg_to_rad(slope_angle_deg)
-	forward_tangent = Vector3(0.0, -sin(slope_rad), -cos(slope_rad))
+func _build_centerline() -> void:
+	_points = PackedVector3Array()
+	_forwards = PackedVector3Array()
 
-	ramp_body = StaticBody3D.new()
-	ramp_body.name = "Ramp"
-	ramp_body.rotation.x = -slope_rad
-	add_child(ramp_body)
-	ramp_body.add_to_group("ground")
+	var slope := deg_to_rad(slope_angle_deg)
+	var horiz := cos(slope)
+	var drop := sin(slope)
 
-	var total_length := track_length + overrun
-	var mesh_instance := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(track_width, ramp_thickness, total_length + back_overrun)
-	mesh_instance.mesh = box
-	mesh_instance.position = Vector3(0, -ramp_thickness * 0.5, (back_overrun - total_length) * 0.5)
-	mesh_instance.material_override = _flat_mat(Color(0.30, 0.30, 0.32))
-	ramp_body.add_child(mesh_instance)
+	# Curvature (rad/m) = two summed sines: long lazy bends + shorter wiggle.
+	var amp1 := _rng.randf_range(0.0030, 0.0045)
+	var amp2 := _rng.randf_range(0.0015, 0.0030)
+	var wl1 := _rng.randf_range(420.0, 640.0)
+	var wl2 := _rng.randf_range(170.0, 260.0)
+	var ph1 := _rng.randf_range(0.0, TAU)
+	var ph2 := _rng.randf_range(0.0, TAU)
 
-	var coll := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = box.size
-	coll.shape = shape
-	coll.position = mesh_instance.position
-	ramp_body.add_child(coll)
+	var pos := Vector3.ZERO
+	var heading := 0.0  # 0 = -Z
+	var sample_count: int = int(arc_length / SAMPLE_STEP) + 2
 
-	start_position = ramp_body.global_transform * Vector3(0, 0.05, 0)
-
-	_add_center_dashes(total_length)
-
-
-func _add_center_dashes(total_length: float) -> void:
-	var dash_mat := _flat_mat(Color(0.72, 0.70, 0.58))
-	var z := -4.0
-	while z > -total_length + 4.0:
-		var dash := MeshInstance3D.new()
-		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.35, 0.03, 3.0)
-		dash.mesh = mesh
-		dash.material_override = dash_mat
-		dash.position = Vector3(0, 0.02, z)
-		ramp_body.add_child(dash)
-		z -= 10.0
+	for i in sample_count:
+		var s := i * SAMPLE_STEP
+		var h_dir := Vector3(-sin(heading), 0.0, -cos(heading))
+		var step_vec := h_dir * (SAMPLE_STEP * horiz) + Vector3(0.0, -SAMPLE_STEP * drop, 0.0)
+		_points.append(pos)
+		_forwards.append(step_vec.normalized())
+		pos += step_vec
+		var curvature := amp1 * sin(TAU * s / wl1 + ph1) + amp2 * sin(TAU * s / wl2 + ph2)
+		heading += curvature * SAMPLE_STEP
 
 
-func _build_boundaries() -> void:
-	var total_length := track_length + overrun
-	var wall_start_z := back_overrun
-	var wall_end_z := -total_length
-	var wall_length := wall_start_z - wall_end_z
-	var wall_center_z := (wall_start_z + wall_end_z) * 0.5
+func _build_road() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var curb_st := SurfaceTool.new()
+	curb_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var ground_st := SurfaceTool.new()
+	ground_st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	for side in [-1.0, 1.0]:
-		var wall := StaticBody3D.new()
-		wall.name = "Boundary%s" % ("Left" if side < 0 else "Right")
-		ramp_body.add_child(wall)
+	var half := road_width * 0.5
+	for i in _points.size() - 1:
+		var xf0 := _sample_frame(i)
+		var xf1 := _sample_frame(i + 1)
+		_add_strip_quad(st, xf0, xf1, -half, half, 0.0)
+		# Curbs: slightly raised outer strips on both edges.
+		_add_strip_quad(curb_st, xf0, xf1, -half - 0.55, -half, 0.13)
+		_add_strip_quad(curb_st, xf0, xf1, half, half + 0.55, 0.13)
+		# Wide sidewalk/ground fill so the world doesn't fall away into
+		# fog-colored void beyond the curbs (buildings need footing).
+		_add_strip_quad(ground_st, xf0, xf1, -half - 45.0, -half - 0.55, 0.1)
+		_add_strip_quad(ground_st, xf0, xf1, half + 0.55, half + 45.0, 0.1)
 
-		var mesh := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(0.6, 1.6, wall_length)
-		mesh.mesh = box
-		mesh.material_override = _flat_mat(Color(0.52, 0.52, 0.54))
-		mesh.position = Vector3(side * (track_width * 0.5 + 0.3), 0.8, wall_center_z)
-		wall.add_child(mesh)
+	var road := MeshInstance3D.new()
+	road.mesh = st.commit()
+	road.material_override = _flat_mat(Color(0.15, 0.12, 0.21))
+	_geometry.add_child(road)
 
-		var coll := CollisionShape3D.new()
-		var shape := BoxShape3D.new()
-		shape.size = box.size
-		coll.shape = shape
-		coll.position = mesh.position
-		wall.add_child(coll)
+	var curbs := MeshInstance3D.new()
+	curbs.mesh = curb_st.commit()
+	var curb_mat := _flat_mat(Color(0.2, 0.5, 0.5))
+	curb_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	curbs.material_override = curb_mat
+	_geometry.add_child(curbs)
+
+	var ground := MeshInstance3D.new()
+	ground.mesh = ground_st.commit()
+	ground.material_override = _flat_mat(Color(0.2, 0.16, 0.26))
+	_geometry.add_child(ground)
+
+
+## One quad of a ribbon between two consecutive cross-sections, between
+## lateral offsets lat_a..lat_b, raised by `lift` along the road normal.
+func _add_strip_quad(st: SurfaceTool, xf0: Transform3D, xf1: Transform3D,
+		lat_a: float, lat_b: float, lift: float) -> void:
+	var a0 := xf0.origin + xf0.basis.x * lat_a + xf0.basis.y * lift
+	var b0 := xf0.origin + xf0.basis.x * lat_b + xf0.basis.y * lift
+	var a1 := xf1.origin + xf1.basis.x * lat_a + xf1.basis.y * lift
+	var b1 := xf1.origin + xf1.basis.x * lat_b + xf1.basis.y * lift
+	var n0: Vector3 = xf0.basis.y
+	var n1: Vector3 = xf1.basis.y
+	st.set_normal(n0); st.add_vertex(a0)
+	st.set_normal(n0); st.add_vertex(b0)
+	st.set_normal(n1); st.add_vertex(b1)
+	st.set_normal(n0); st.add_vertex(a0)
+	st.set_normal(n1); st.add_vertex(b1)
+	st.set_normal(n1); st.add_vertex(a1)
+
+
+func _sample_frame(i: int) -> Transform3D:
+	var fwd := _forwards[i]
+	var side := fwd.cross(Vector3.UP).normalized()
+	var up := side.cross(fwd).normalized()
+	return Transform3D(Basis(side, up, -fwd), _points[i])
+
+
+func _build_dashes() -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var s := 6.0
+	while s < arc_length - 10.0:
+		var xf0 := transform_at(s, 0.0)
+		var xf1 := transform_at(s + 2.6, 0.0)
+		_add_strip_quad(st, xf0, xf1, -0.3, 0.3, 0.05)
+		s += 12.0
+	var dashes := MeshInstance3D.new()
+	dashes.mesh = st.commit()
+	# Neon center line: unshaded so it glows the same regardless of the
+	# pink dusk lighting, cull disabled so winding can't hide it.
+	var dash_mat := StandardMaterial3D.new()
+	dash_mat.albedo_color = Color(1.0, 0.35, 0.65)
+	dash_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dash_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	dashes.material_override = dash_mat
+	_geometry.add_child(dashes)
 
 
 func _build_finish_banner() -> void:
+	var xf := transform_at(arc_length - 1.0, 0.0)
 	var banner := Node3D.new()
 	banner.name = "FinishBanner"
-	ramp_body.add_child(banner)
-	var z := -track_length
+	banner.transform = xf
+	_geometry.add_child(banner)
 
 	for side in [-1.0, 1.0]:
 		var post := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.3, 3.0, 0.3)
+		mesh.size = Vector3(0.3, 3.2, 0.3)
 		post.mesh = mesh
-		post.material_override = _flat_mat(Color(0.58, 0.26, 0.24))
-		post.position = Vector3(side * (track_width * 0.5 - 0.2), 1.5, z)
+		post.material_override = _flat_mat(Color(0.85, 0.3, 0.5))
+		post.position = Vector3(side * (road_width * 0.5 - 0.3), 1.6, 0)
 		banner.add_child(post)
 
 	var bar := MeshInstance3D.new()
 	var bar_mesh := BoxMesh.new()
-	bar_mesh.size = Vector3(track_width - 0.2, 0.3, 0.3)
+	bar_mesh.size = Vector3(road_width - 0.4, 0.3, 0.3)
 	bar.mesh = bar_mesh
-	bar.material_override = _flat_mat(Color(0.78, 0.71, 0.5))
-	bar.position = Vector3(0, 3.0, z)
+	bar.material_override = _flat_mat(Color(0.3, 0.85, 0.85))
+	bar.position = Vector3(0, 3.2, 0)
 	banner.add_child(bar)
 
 
 # --- Roadside scenery -------------------------------------------------------
-# Decorative only (no collision). Items are positioned in the ramp's local
-# space so they follow the slope, then counter-rotated by the slope angle so
-# poles/trees/buildings stand plumb-vertical like real streetside objects on
-# a hill, sunk slightly so their bases never float above the surface.
+# Placed via transform_at along the curve, then kept world-upright (only
+# yawed to follow the road's heading), sunk slightly so bases never float.
 
 func _build_scenery() -> void:
 	var scenery := Node3D.new()
 	scenery.name = "Scenery"
-	ramp_body.add_child(scenery)
+	_geometry.add_child(scenery)
 
-	var srng := RandomNumberGenerator.new()
-	srng.seed = 90210  # fixed seed: scenery stays put across restarts
+	var edge := road_width * 0.5
 
-	var edge := track_width * 0.5
-	var slope_rad := deg_to_rad(slope_angle_deg)
-
-	# Streetlights: alternating sides, evenly spaced, arm reaching over the road.
-	var z := -14.0
+	# Streetlights: alternating sides.
+	var s := 20.0
 	var light_side := 1.0
-	while z > -track_length:
-		_add_streetlight(scenery, Vector3(light_side * (edge + 1.2), -0.05, z), -light_side, slope_rad)
+	while s < arc_length - 15.0:
+		_add_upright(scenery, s, light_side * (edge + 1.3), -0.05,
+				_make_streetlight(-light_side))
 		light_side = -light_side
-		z -= 28.0
+		s += 26.0
 
-	# Trees, bushes, and street clutter scattered along both sides.
-	for s in [-1.0, 1.0]:
-		z = -8.0
-		while z > -track_length - 10.0:
-			var pos := Vector3(s * (edge + srng.randf_range(1.8, 6.0)), -0.05, z + srng.randf_range(-4.0, 4.0))
-			var roll := srng.randf()
+	# Trees, bushes, and clutter on both sides.
+	for sd in [-1.0, 1.0]:
+		s = 10.0
+		while s < arc_length - 10.0:
+			var lat: float = sd * (edge + _rng.randf_range(2.0, 6.5))
+			var roll := _rng.randf()
+			var item: Node3D
 			if roll < 0.4:
-				_add_tree(scenery, pos, slope_rad, srng)
+				item = _make_tree()
 			elif roll < 0.65:
-				_add_bush(scenery, pos, slope_rad, srng)
+				item = _make_bush()
 			elif roll < 0.85:
-				_add_trash_can(scenery, pos, slope_rad)
+				item = _make_trash_can()
 			else:
-				_add_hydrant(scenery, pos, slope_rad)
-			z -= srng.randf_range(7.0, 14.0)
+				item = _make_hydrant()
+			_add_upright(scenery, s + _rng.randf_range(-3.0, 3.0), lat, -0.05, item)
+			s += _rng.randf_range(9.0, 16.0)
 
-	# City-canyon building slabs further out, with pixel-art window faces
-	# toward the road.
+	# City-canyon building slabs further out.
 	var window_mats: Array[StandardMaterial3D] = []
 	for i in 3:
-		window_mats.append(_make_window_material(srng))
-	for s in [-1.0, 1.0]:
-		z = -20.0
-		while z > -track_length + 10.0:
-			var w := srng.randf_range(14.0, 26.0)
-			_add_building_slab(scenery, s, z, w, slope_rad, srng, window_mats)
-			z -= w + srng.randf_range(6.0, 18.0)
+		window_mats.append(_make_window_material())
+	for sd in [-1.0, 1.0]:
+		s = 25.0
+		while s < arc_length - 20.0:
+			var w := _rng.randf_range(14.0, 26.0)
+			_add_upright(scenery, s + w * 0.5,
+					sd * (edge + _rng.randf_range(9.0, 15.0)), -0.8,
+					_make_building_slab(sd, w, window_mats))
+			s += w + _rng.randf_range(6.0, 18.0)
 
-	# Manhole covers down the road surface.
-	z = -30.0
-	var mh_mat := _flat_mat(Color(0.22, 0.22, 0.23))
-	while z > -track_length:
+	# Manhole covers along the road.
+	s = 30.0
+	var mh_mat := _flat_mat(Color(0.1, 0.09, 0.15))
+	while s < arc_length - 10.0:
+		var xf := transform_at(s, _rng.randf_range(-edge * 0.6, edge * 0.6))
 		var mh := MeshInstance3D.new()
 		var disc := CylinderMesh.new()
 		disc.top_radius = 0.45
@@ -205,18 +265,24 @@ func _build_scenery() -> void:
 		disc.height = 0.02
 		mh.mesh = disc
 		mh.material_override = mh_mat
-		mh.position = Vector3(srng.randf_range(-edge * 0.6, edge * 0.6), 0.015, z)
+		mh.transform = Transform3D(xf.basis, xf.origin + xf.basis.y * 0.015)
 		scenery.add_child(mh)
-		z -= srng.randf_range(35.0, 55.0)
+		s += _rng.randf_range(35.0, 55.0)
 
 
-func _add_streetlight(parent: Node3D, pos: Vector3, toward_road: float, slope_rad: float) -> void:
-	var item := Node3D.new()
-	item.position = pos
-	item.rotation.x = slope_rad
+## Places `item` at (s, lateral), world-upright, yawed to the road heading.
+func _add_upright(parent: Node3D, s: float, lateral: float, sink: float, item: Node3D) -> void:
+	var xf := transform_at(s, lateral)
+	var fwd: Vector3 = -xf.basis.z
+	item.position = xf.origin + Vector3(0, sink, 0)
+	item.rotation.y = atan2(-fwd.x, -fwd.z)
 	parent.add_child(item)
 
+
+func _make_streetlight(toward_road: float) -> Node3D:
+	var item := Node3D.new()
 	var pole_mat := _flat_mat(Color(0.2, 0.22, 0.25))
+
 	var pole := MeshInstance3D.new()
 	var pole_mesh := CylinderMesh.new()
 	pole_mesh.top_radius = 0.06
@@ -241,34 +307,30 @@ func _add_streetlight(parent: Node3D, pos: Vector3, toward_road: float, slope_ra
 	lamp.mesh = lamp_mesh
 	lamp.position = Vector3(toward_road * 0.95, 4.1, 0)
 	var lamp_mat := StandardMaterial3D.new()
-	lamp_mat.albedo_color = Color(0.92, 0.9, 0.82)
+	lamp_mat.albedo_color = Color(1.0, 0.55, 0.75)
 	lamp_mat.emission_enabled = true
-	lamp_mat.emission = Color(1.0, 0.9, 0.7)
-	lamp_mat.emission_energy_multiplier = 0.5
+	lamp_mat.emission = Color(1.0, 0.4, 0.7)
+	lamp_mat.emission_energy_multiplier = 1.4
 	lamp.material_override = lamp_mat
 	item.add_child(lamp)
+	return item
 
 
-func _add_tree(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumberGenerator) -> void:
+func _make_tree() -> Node3D:
 	var item := Node3D.new()
-	item.position = pos
-	item.rotation.x = slope_rad
-	parent.add_child(item)
-
 	var trunk := MeshInstance3D.new()
 	var trunk_mesh := CylinderMesh.new()
 	trunk_mesh.top_radius = 0.12
 	trunk_mesh.bottom_radius = 0.16
-	var trunk_h := srng.randf_range(1.2, 2.0)
+	var trunk_h := _rng.randf_range(1.2, 2.0)
 	trunk_mesh.height = trunk_h
 	trunk.mesh = trunk_mesh
 	trunk.position = Vector3(0, trunk_h * 0.5, 0)
 	trunk.material_override = _flat_mat(Color(0.35, 0.27, 0.2))
 	item.add_child(trunk)
 
-	# Rounded canopy: overlapping soft spheres in muted greens.
-	var green := Color(0.28, 0.38 + srng.randf_range(0.0, 0.08), 0.26)
-	var radius := srng.randf_range(0.8, 1.2)
+	var green := Color(0.12, 0.34 + _rng.randf_range(0.0, 0.08), 0.3)
+	var radius := _rng.randf_range(0.8, 1.2)
 	var y := trunk_h + radius * 0.6
 	for layer in 2:
 		var leaves := MeshInstance3D.new()
@@ -276,36 +338,30 @@ func _add_tree(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumbe
 		ball.radius = radius
 		ball.height = radius * 1.8
 		leaves.mesh = ball
-		leaves.position = Vector3(srng.randf_range(-0.2, 0.2), y, srng.randf_range(-0.2, 0.2))
+		leaves.position = Vector3(_rng.randf_range(-0.2, 0.2), y, _rng.randf_range(-0.2, 0.2))
 		leaves.material_override = _flat_mat(green.lightened(layer * 0.08))
 		item.add_child(leaves)
 		y += radius * 0.7
 		radius *= 0.7
+	return item
 
 
-func _add_bush(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumberGenerator) -> void:
+func _make_bush() -> Node3D:
 	var item := Node3D.new()
-	item.position = pos
-	item.rotation.x = slope_rad
-	parent.add_child(item)
-
 	var bush := MeshInstance3D.new()
 	var ball := SphereMesh.new()
-	var size := srng.randf_range(0.5, 0.9)
+	var size := _rng.randf_range(0.5, 0.9)
 	ball.radius = size * 0.65
 	ball.height = size
 	bush.mesh = ball
 	bush.position = Vector3(0, size * 0.42, 0)
-	bush.material_override = _flat_mat(Color(0.3, 0.4, 0.28))
+	bush.material_override = _flat_mat(Color(0.14, 0.36, 0.3))
 	item.add_child(bush)
+	return item
 
 
-func _add_trash_can(parent: Node3D, pos: Vector3, slope_rad: float) -> void:
+func _make_trash_can() -> Node3D:
 	var item := Node3D.new()
-	item.position = pos
-	item.rotation.x = slope_rad
-	parent.add_child(item)
-
 	var can := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.26
@@ -313,17 +369,14 @@ func _add_trash_can(parent: Node3D, pos: Vector3, slope_rad: float) -> void:
 	cyl.height = 0.65
 	can.mesh = cyl
 	can.position = Vector3(0, 0.325, 0)
-	can.material_override = _flat_mat(Color(0.3, 0.32, 0.34))
+	can.material_override = _flat_mat(Color(0.3, 0.28, 0.42))
 	item.add_child(can)
+	return item
 
 
-func _add_hydrant(parent: Node3D, pos: Vector3, slope_rad: float) -> void:
+func _make_hydrant() -> Node3D:
 	var item := Node3D.new()
-	item.position = pos
-	item.rotation.x = slope_rad
-	parent.add_child(item)
-
-	var red := _flat_mat(Color(0.55, 0.24, 0.2))
+	var red := _flat_mat(Color(0.8, 0.25, 0.35))
 	var body := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.11
@@ -342,28 +395,22 @@ func _add_hydrant(parent: Node3D, pos: Vector3, slope_rad: float) -> void:
 	cap.position = Vector3(0, 0.48, 0)
 	cap.material_override = red
 	item.add_child(cap)
+	return item
 
 
-func _add_building_slab(parent: Node3D, side: float, z: float, width: float,
-		slope_rad: float, srng: RandomNumberGenerator,
-		window_mats: Array[StandardMaterial3D]) -> void:
-	var h := srng.randf_range(10.0, 26.0)
-	var d := srng.randf_range(8.0, 14.0)
-	var x := side * (track_width * 0.5 + srng.randf_range(9.0, 15.0))
-
+func _make_building_slab(side: float, width: float,
+		window_mats: Array[StandardMaterial3D]) -> Node3D:
+	var h := _rng.randf_range(10.0, 26.0)
+	var d := _rng.randf_range(8.0, 14.0)
 	var item := Node3D.new()
-	# Sunk so the base never floats off the slope under the counter-rotation.
-	item.position = Vector3(x, -0.8, z - width * 0.5)
-	item.rotation.x = slope_rad
-	parent.add_child(item)
 
-	var shade := srng.randf_range(-0.015, 0.03)
+	var shade := _rng.randf_range(-0.015, 0.03)
 	var slab := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = Vector3(d, h, width)
 	slab.mesh = box
 	slab.position = Vector3(0, h * 0.5, 0)
-	slab.material_override = _flat_mat(Color(0.38 + shade, 0.40 + shade, 0.44 + shade))
+	slab.material_override = _flat_mat(Color(0.2 + shade, 0.16 + shade, 0.32 + shade))
 	item.add_child(slab)
 
 	# Pixel-art window face toward the road.
@@ -373,24 +420,29 @@ func _add_building_slab(parent: Node3D, side: float, z: float, width: float,
 	face.mesh = quad
 	face.position = Vector3(-side * (d * 0.5 + 0.05), h * 0.5, 0)
 	face.rotation.y = -side * PI * 0.5
-	face.material_override = window_mats[srng.randi_range(0, window_mats.size() - 1)]
+	face.material_override = window_mats[_rng.randi_range(0, window_mats.size() - 1)]
 	item.add_child(face)
+	return item
 
 
-func _make_window_material(srng: RandomNumberGenerator) -> StandardMaterial3D:
+func _make_window_material() -> StandardMaterial3D:
 	var w := 20
 	var h := 28
 	var img := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
-	var facade := Color(0.34, 0.36, 0.40, 1.0)
-	var lit := Color(0.85, 0.78, 0.6, 1.0)
-	var glass := Color(0.45, 0.5, 0.56, 1.0)
+	var facade := Color(0.17, 0.13, 0.28, 1.0)
+	var glass := Color(0.28, 0.24, 0.42, 1.0)
+	var neon: Array[Color] = [
+		Color(1.0, 0.75, 0.4, 1.0),   # warm
+		Color(0.4, 0.9, 0.95, 1.0),   # cyan
+		Color(1.0, 0.4, 0.75, 1.0),   # pink
+	]
 
 	img.fill(facade)
 	var y := 2
 	while y < h - 2:
 		var x := 2
 		while x < w - 2:
-			var col := lit if srng.randf() < 0.12 else glass
+			var col := neon[_rng.randi_range(0, 2)] if _rng.randf() < 0.22 else glass
 			for dx in 2:
 				for dy in 2:
 					img.set_pixel(x + dx, y + dy, col)
@@ -403,57 +455,6 @@ func _make_window_material(srng: RandomNumberGenerator) -> StandardMaterial3D:
 	# Shaded, so facades pick up the sun and fog like the rest of the world.
 	mat.roughness = 0.9
 	return mat
-
-
-func _spawn_obstacles() -> void:
-	if obstacles_root:
-		obstacles_root.queue_free()
-	obstacles_root = Node3D.new()
-	obstacles_root.name = "Obstacles"
-	add_child(obstacles_root)
-
-	_rng.randomize()
-
-	var start_buffer := 20.0
-	var end_buffer := 20.0
-	var usable_length := track_length - start_buffer - end_buffer
-	if usable_length <= 0.0 or obstacle_count <= 0:
-		return
-	var spacing := usable_length / float(obstacle_count)
-
-	var lane_width := track_width / float(lane_count)
-	var lane_offsets: Array[float] = []
-	for i in lane_count:
-		lane_offsets.append(-track_width * 0.5 + lane_width * (i + 0.5))
-
-	for i in obstacle_count:
-		var z_center := -start_buffer - spacing * i - _rng.randf_range(0.0, spacing * 0.6)
-		var lanes: Array[float] = lane_offsets.duplicate()
-		lanes.shuffle()
-		var occupied_count: int = 1 if _rng.randf() < 0.55 else 2
-		occupied_count = min(occupied_count, lane_count - 1)
-
-		for j in occupied_count:
-			var obstacle: Area3D = OBSTACLE_SCENE.instantiate()
-			obstacle.type = _random_type()
-			obstacles_root.add_child(obstacle)
-			var jitter_x := _rng.randf_range(-lane_width * 0.15, lane_width * 0.15)
-			var jitter_z := _rng.randf_range(-1.0, 1.0)
-			var local_point := Vector3(lanes[j] + jitter_x, 0.0, z_center + jitter_z)
-			obstacle.global_position = ramp_body.global_transform * local_point
-			obstacle.global_rotation = ramp_body.global_rotation
-
-
-func _random_type() -> Obstacle.ObstacleType:
-	var roll := _rng.randf()
-	if roll < 0.15:
-		return Obstacle.ObstacleType.RAMP
-	elif roll < 0.45:
-		return Obstacle.ObstacleType.CONE
-	elif roll < 0.75:
-		return Obstacle.ObstacleType.RAIL
-	else:
-		return Obstacle.ObstacleType.CRATE
 
 
 func _flat_mat(color: Color) -> StandardMaterial3D:

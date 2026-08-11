@@ -2,93 +2,107 @@
 
 **[▶ Play it in your browser](https://waazam.github.io/cranboardin/)**
 
-A third-person downhill skating prototype built in Godot 4.7. Skate down a
-long hillside street toward a distant city skyline, picking up speed as you
-descend, dodging (or jumping) obstacles along the way.
+A third-person downhill skating game built in Godot 4.7, with a retro
+pixelated neon look. Bomb a long, curving city hill at dusk, dodge (or
+jump over) the zombie horde shambling onto the street, grab cranberry
+juice bottles to stay alive, and reach the finish line. Each level is a
+longer hill with a bigger horde.
 
 ## Controls
 
-| Key         | Action                          |
-|-------------|----------------------------------|
-| `W`         | Accelerate                       |
-| `S`         | Brake                            |
-| `A` / `D`   | Steer left / right               |
-| `Space`     | Jump (coyote time + jump buffer) |
-| `R`         | Restart the run                  |
+| Key         | Action                                    |
+|-------------|-------------------------------------------|
+| `W`         | Accelerate                                 |
+| `S`         | Brake                                      |
+| `A` / `D`   | Steer left / right                         |
+| `Space`     | Jump (clears zombies; coyote time + buffer)|
+| `R`         | Restart / next level / retry               |
 
 ## How it plays
 
-- Speed ramps automatically from a base speed up to a max speed as you
-  progress down the hill (`Player.get_progress()` drives the curve), on top
-  of which `W`/`S` nudge it further.
-- Obstacles come in four flavors, scattered across 3 lanes with at least one
-  lane always left open:
-  - **Cone / Rail / Crate** -- hazards. Touching one costs you speed and
-    gives a brief invulnerability window (it blinks).
-  - **Ramp** (blue wedge) -- a boost pad. Touching one launches you upward,
-    no penalty.
-- Reach the bottom to finish the run and see your time, top speed, and
-  crash count. Press `R` any time to restart (obstacles re-shuffle).
+- Speed ramps automatically from a base speed to a max as you descend
+  (`Player.get_progress()` drives the curve); `W`/`S` push it further.
+- **Zombies** spawn from the road sides and lurk ahead, shambling toward
+  your lane. Contact costs 26 HP and a chunk of speed (with a brief
+  blink-invulnerability window); at 0 HP you crash out -- game over,
+  `R` to retry. Jumping clears them.
+- **Cranberry bottles** restore 30 HP -- or *overheal* you up to 150
+  if you're already full (the HP bar turns cranberry).
+- Reach the bottom to finish the level; `R` rolls you into the next,
+  longer, more crowded one. A run takes roughly 1.5-2.5 minutes.
+- All audio -- the retro synth loop, speed-scaled wind rush, ambient
+  city bed, and hit/jump/pickup/finish stingers -- is procedurally
+  synthesized by `tools/gen_audio.gd` (no third-party assets).
+- The whole 3D world renders at 1/3 resolution into a SubViewport
+  upscaled with nearest filtering: full-screen chunky pixels, crisp HUD.
 
 ## Project structure
 
 ```
 scenes/
-  main.tscn          Entry scene (set as the project's main scene). Wires
-                      Player/Track/Background/CameraRig/HUD together.
-  player.tscn         CharacterBody3D + capsule collider. The visible
-                      board/body/head/arms are built in code.
-  obstacle.tscn       Area3D trigger; obstacle.gd swaps its mesh, collider
-                      size, and behavior based on `type`.
+  main.tscn           Entry scene: pixelation viewport wrapping the 3D
+                      world, plus the HUD.
+  player.tscn         CharacterBody3D shell for the player rig.
 scripts/
-  main.gd             Assembles the scene, handles the R-to-restart key.
-  player.gd           Movement, steering, jump, speed ramp, crash/boost
-                      hooks; composes the visual rig from the two entities
-                      below.
+  main.gd             Level loop (running / complete / game over), audio
+                      stack, R-key handling.
+  track.gd            Procedural curved road: wandering-heading downhill
+                      centerline, road/curb/ground ribbons, neon center
+                      line, finish banner, and city scenery along the
+                      curve. transform_at(s, lateral) is the API everything
+                      else positions itself with.
+  player.gd           Spline-space movement (s / lateral / height), speed
+                      ramp, jump, health + overheal, damage/death.
   character.gd        The rider: Godot's standard-animation-library
-                      mannequin (Godot/AnimationLibrary_Godot_Standard.glb)
-                      plus a small animation state machine -- skate tuck
-                      (Crouch_Idle), airborne (Jump_Start), crash
-                      (Hit_Chest), finish celebration (Dance).
-  skateboard.gd       The board (deck/trucks/wheels) as its own entity,
-                      with wheels that spin to match ground speed.
-  track.gd            Procedurally builds the ramp, boundary walls, finish
-                      banner, the lane-fair obstacle scatter, and roadside
-                      scenery: city-canyon building slabs with pixel-art
-                      window faces, streetlights, blocky trees, bushes,
-                      hydrants, trash cans, manhole covers.
-  obstacle.gd         The 4 obstacle types (CONE/RAIL/CRATE/RAMP).
-  camera_rig.gd       Smoothed third-person chase camera with a speed-based
-                      FOV kick.
-  sky_background.gd   Procedural dusk sky plus a pixel-art city backdrop:
-                      two parallax skyline strips and blocky clouds drawn
-                      pixel-by-pixel into textures (NEAREST-filtered so
-                      they stay crisp), riding along just behind the road.
-  bird.gd             A single animated background bird (spawned in a flock
-                      by sky_background.gd).
-  hud.gd              All UI, built in code -- speed/timer/crash readout,
-                      progress bar, crash flash, results panel.
+                      mannequin with a state machine (skate tuck, airborne,
+                      hit, death, finish dance) and a sideways skate stance.
+  lean_modifier.gd    SkeletonModifier3D that rolls the rider's spine bones
+                      into turns (post-animation, so it blends with clips).
+  skateboard.gd       The board: deck, kicktails, grip tape, trucks, and
+                      wheels that spin to match ground speed.
+  zombie_manager.gd   Zombie spawn plan + activation window + shamble AI +
+                      contact damage (green-tinted mannequins, Walk anim).
+  pickup_manager.gd   Cranberry bottle spawns, bob/spin, heal-on-touch.
+  camera_rig.gd       Chase camera following the player's heading around
+                      curves, with speed-based FOV kick.
+  sky_background.gd   Neon dusk: purple/pink sky, fog, pixel-art skyline
+                      strips with neon windows, clouds, birds -- follows
+                      the player's position and heading.
+  bird.gd             A single ambient bird (flock spawned by the sky).
+  hud.gd              Code-built UI: speed/time/level, HP bar (cranberry
+                      when overhealed), progress bar, messages, panels.
+tools/
+  gen_audio.gd        Offline synthesizer for all wav assets in audio/.
+audio/                Generated music, ambience loops, and stingers.
+Godot/                The engine's standard animation library mannequin
+                      (rider + zombies).
+docs/                 Web export served by GitHub Pages.
 ```
 
-Aside from the rider (Godot's bundled standard-animation-library mannequin
-in `Godot/`), everything -- track, obstacles, board, skyline, clouds,
-birds, UI -- is generated at runtime from primitive meshes and
-pixel-by-pixel procedural textures. Most tunables (speeds, track length,
-obstacle density, colors, camera framing, etc.) are exposed as `@export`
-properties on the relevant node, so start in the Inspector before touching
-code.
+Everything except the mannequin GLB is generated at runtime from
+primitives and pixel-by-pixel textures. Most tunables (speeds, track
+length/curviness, zombie counts, heal amounts, colors, camera framing,
+pixelation level) are `@export`s or constants on the relevant script.
 
 ## Opening it
 
-Open `project.godot` in Godot 4.7+ and press Play (it already targets the
-Godot install/version configured on this machine), or open
-`scenes/main.tscn` directly and run that scene.
+Open `project.godot` in Godot 4.7+ and press Play, or open
+`scenes/main.tscn` and run that. To rebuild the web export:
+
+```
+godot --headless --path . --export-release "Web"
+```
+
+To regenerate the audio:
+
+```
+godot --headless --path . -s res://tools/gen_audio.gd
+```
 
 ## Ideas for next passes
 
-- Swap the primitive obstacles/board for real art.
-- Blend steering lean into the rider's skeleton (e.g. spine bones) instead
-  of tilting the whole visual rig.
-- Curve the track instead of a single straight slope.
-- Sound: wind rush that scales with speed, crash/boost stingers, ambient
-  city noise.
+- Real art for the board and bottles.
+- Zombie variety: runners, big bruisers, groaning audio stingers.
+- Score/combo system for near-misses and airtime.
+- CRT shader (scanlines + curvature) over the pixelation viewport.
+- GitHub Actions workflow to export and deploy Pages on push.

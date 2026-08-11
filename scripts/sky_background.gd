@@ -11,10 +11,10 @@ extends Node3D
 
 const BIRD_SCRIPT := preload("res://scripts/bird.gd")
 
-@export var sky_top_color := Color(0.47, 0.60, 0.74)
-@export var sky_horizon_color := Color(0.84, 0.83, 0.79)
-@export var building_color := Color(0.36, 0.40, 0.47)
-@export var window_color := Color(0.88, 0.84, 0.72)
+@export var sky_top_color := Color(0.18, 0.08, 0.32)
+@export var sky_horizon_color := Color(0.95, 0.42, 0.48)
+@export var building_color := Color(0.16, 0.12, 0.28)
+@export var window_color := Color(1.0, 0.75, 0.4)
 ## Distance from the road to the near skyline layer.
 @export var skyline_distance := 60.0
 @export var cloud_count := 18
@@ -60,13 +60,21 @@ func _update_follow(delta: float) -> void:
 	_y_smooth = lerpf(_y_smooth, t.y, 1.0 - exp(-follow_y_smoothing * delta))
 	_follow_root.global_position = Vector3(t.x, _y_smooth, t.z)
 
+	# Yaw the backdrop toward the player's heading (smoothed), so the city
+	# always sits ahead even as the road curves.
+	var fwd: Vector3 = -_follow_target.global_basis.z
+	var target_yaw := atan2(-fwd.x, -fwd.z)
+	_follow_root.rotation.y = lerp_angle(_follow_root.rotation.y, target_yaw,
+			1.0 - exp(-1.2 * delta))
+
 
 func _setup_environment() -> void:
 	var sky_material := ProceduralSkyMaterial.new()
 	sky_material.sky_top_color = sky_top_color
 	sky_material.sky_horizon_color = sky_horizon_color
-	sky_material.ground_bottom_color = sky_horizon_color
-	sky_material.ground_horizon_color = sky_horizon_color
+	# Below the horizon: dark plum, so the world isn't floating on glow.
+	sky_material.ground_bottom_color = Color(0.14, 0.09, 0.2)
+	sky_material.ground_horizon_color = Color(0.42, 0.2, 0.34)
 
 	var sky := Sky.new()
 	sky.sky_material = sky_material
@@ -75,30 +83,31 @@ func _setup_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 1.15
+	env.ambient_light_energy = 1.25
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
-	# Depth fog is what visually glues road, scenery, and skyline into one
-	# atmosphere; aerial perspective shifts far fog toward the sky color.
+	# Depth fog glues road, scenery, and skyline into one atmosphere;
+	# tinted pink-purple for the neon dusk.
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.80, 0.82, 0.85)
-	env.fog_density = 0.006
+	env.fog_light_color = Color(0.62, 0.32, 0.52)
+	env.fog_density = 0.0045
 	env.fog_sky_affect = 0.1
 	env.fog_aerial_perspective = 0.5
 
-	# Gentle global desaturation calms the palette without flattening it.
+	# Push saturation for the lurid retro look.
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 0.9
+	env.adjustment_saturation = 1.12
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
 
+	# Low pink dusk sun.
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-42, -30, 0)
-	sun.light_color = Color(1.0, 0.97, 0.9)
-	sun.light_energy = 0.75
+	sun.rotation_degrees = Vector3(-38, -30, 0)
+	sun.light_color = Color(1.0, 0.62, 0.68)
+	sun.light_energy = 0.7
 	sun.shadow_enabled = true
 	sun.shadow_blur = 1.8
 	sun.shadow_opacity = 0.65
@@ -151,6 +160,13 @@ func _make_skyline_texture(silhouette: Color, windows: Color,
 	var h := 96
 	var img := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
 	var max_h: int = int(h * max_height_ratio)
+	# Neon window variants: warm, cyan, pink (blended toward this layer's
+	# already-hazed base so far layers stay atmospheric).
+	var window_variants: Array[Color] = [
+		windows,
+		windows.lerp(Color(0.4, 0.9, 0.95), 0.6),
+		windows.lerp(Color(1.0, 0.4, 0.75), 0.6),
+	]
 
 	var x := 0
 	while x < w:
@@ -166,16 +182,17 @@ func _make_skyline_texture(silhouette: Color, windows: Color,
 			for py in range(h - bh, h):
 				img.set_pixel(px, py, col)
 
-		# Lit windows: 2x2 pixel blocks on a regular grid, sparsely on
-		# (daytime -- most windows just read as glass, not lamps).
+		# Lit windows: 2x2 pixel blocks on a regular grid; dusk city, so a
+		# decent scattering of lit neon windows.
 		var wy := h - bh + 3
 		while wy < h - 3:
 			var wx := x + 2
 			while wx < x_end - 3:
-				if _rng.randf() < 0.08:
+				if _rng.randf() < 0.18:
+					var wcol := window_variants[_rng.randi_range(0, 2)]
 					for dx in 2:
 						for dy in 2:
-							img.set_pixel(wx + dx, wy + dy, windows)
+							img.set_pixel(wx + dx, wy + dy, wcol)
 				wx += 4
 			wy += 5
 
@@ -230,7 +247,7 @@ func _make_cloud_texture() -> ImageTexture:
 	var w := 48
 	var h := 24
 	var img := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
-	var body := Color(0.96, 0.96, 0.97)
+	var body := Color(0.95, 0.8, 0.88)  # dusk-lit pink-tinged clouds
 
 	# A cloud is overlapping soft ellipse blobs; alpha falls off smoothly
 	# from each blob's center, and overlaps take the strongest falloff.

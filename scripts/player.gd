@@ -43,13 +43,28 @@ var _invulnerable_timer: float = 0.0
 var _coyote_timer: float = 0.0
 var _jump_buffer_timer: float = 0.0
 var _lateral_velocity: float = 0.0
+
+## Visual rig: `visuals` is the lean/blink pivot; the board and rider are
+## two separate entities beneath it (see skateboard.gd / character.gd).
 var visuals: Node3D
+var skateboard: Skateboard
+var character: Character
 
 
 func _ready() -> void:
 	add_to_group("player")
-	visuals = _build_visuals()
+	visuals = Node3D.new()
+	visuals.name = "Visuals"
 	add_child(visuals)
+
+	skateboard = Skateboard.new()
+	skateboard.name = "Skateboard"
+	visuals.add_child(skateboard)
+
+	character = Character.new()
+	character.name = "Character"
+	character.stand_height = Skateboard.DECK_TOP_HEIGHT
+	visuals.add_child(character)
 
 
 func setup(track: Node3D) -> void:
@@ -72,6 +87,7 @@ func reset_run() -> void:
 	_lateral_velocity = 0.0
 	visuals.visible = true
 	visuals.rotation = Vector3.ZERO
+	character.reset()
 
 
 func get_progress() -> float:
@@ -128,6 +144,8 @@ func _physics_process(delta: float) -> void:
 	global_position.x = clamp(global_position.x, -track_half_width, track_half_width)
 
 	_update_lean(steer_input, delta)
+	skateboard.update_roll(current_speed, delta)
+	character.update_motion(is_on_floor())
 
 	if get_progress() >= 1.0:
 		_finish()
@@ -177,6 +195,7 @@ func register_crash() -> void:
 	current_speed = max(base_speed * 0.6, current_speed * crash_speed_multiplier)
 	_lateral_velocity *= 0.2
 	_invulnerable_timer = invulnerable_duration
+	character.play_crash()
 	crashed.emit(crash_count)
 
 
@@ -191,54 +210,5 @@ func apply_boost() -> void:
 
 func _finish() -> void:
 	run_finished = true
+	character.play_finish()
 	finished.emit(elapsed, top_speed, crash_count)
-
-
-# --- Placeholder low-poly skater visual (board + body + head + arms) ------
-func _build_visuals() -> Node3D:
-	var root := Node3D.new()
-	root.name = "Visuals"
-
-	var board := MeshInstance3D.new()
-	var board_mesh := BoxMesh.new()
-	board_mesh.size = Vector3(0.55, 0.08, 1.3)
-	board.mesh = board_mesh
-	board.position = Vector3(0, 0.04, 0)
-	board.material_override = _flat_material(Color(0.1, 0.1, 0.12))
-	root.add_child(board)
-
-	var body := MeshInstance3D.new()
-	var body_mesh := BoxMesh.new()
-	body_mesh.size = Vector3(0.48, 0.85, 0.3)
-	body.mesh = body_mesh
-	body.position = Vector3(0, 0.56, 0)
-	body.material_override = _flat_material(Color(0.85, 0.18, 0.22))
-	root.add_child(body)
-
-	var head := MeshInstance3D.new()
-	var head_mesh := SphereMesh.new()
-	head_mesh.radius = 0.22
-	head_mesh.height = 0.44
-	head.mesh = head_mesh
-	head.position = Vector3(0, 1.13, 0)
-	head.material_override = _flat_material(Color(0.93, 0.78, 0.62))
-	root.add_child(head)
-
-	for side in [-1.0, 1.0]:
-		var arm := MeshInstance3D.new()
-		var arm_mesh := BoxMesh.new()
-		arm_mesh.size = Vector3(0.13, 0.5, 0.13)
-		arm.mesh = arm_mesh
-		arm.position = Vector3(side * 0.32, 0.55, -0.02)
-		arm.rotation.z = side * -0.4
-		arm.material_override = _flat_material(Color(0.85, 0.18, 0.22))
-		root.add_child(arm)
-
-	return root
-
-
-func _flat_material(color: Color) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.85
-	return mat

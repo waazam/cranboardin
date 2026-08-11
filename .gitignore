@@ -2,10 +2,6 @@
 .godot/
 /android/
 
-# Editor-auto-generated sample asset (not part of this project's content;
-# Godot recreates it on demand, no need to version a multi-MB binary for it)
-/Godot/
-
 # Export builds
 /builds/
 export_presets.cfg

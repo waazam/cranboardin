@@ -1,0 +1,25 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2"]
+[ext_resource type="Script" path="res://scripts/track.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/sky_background.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="6"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Background" type="Node3D" parent="."]
+script = ExtResource("4")
+
+[node name="Track" type="Node3D" parent="."]
+script = ExtResource("3")
+
+[node name="Player" parent="." instance=ExtResource("2")]
+
+[node name="CameraRig" type="Node3D" parent="."]
+script = ExtResource("5")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("6")

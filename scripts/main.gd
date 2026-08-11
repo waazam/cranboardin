@@ -88,8 +88,7 @@ func _advance_or_restart() -> void:
 	_start_level()
 
 
-func _on_player_damaged(health: int) -> void:
-	hud._on_player_damaged(health)
+func _on_player_damaged(_health: int) -> void:
 	_play_sfx(_sfx_hit)
 
 
@@ -102,12 +101,11 @@ func _on_player_jumped() -> void:
 	_play_sfx(_sfx_jump)
 
 
-func _on_player_tricked(trick_name: String) -> void:
-	hud.flash_trick(trick_name)
+func _on_player_tricked(_trick_name: String) -> void:
+	pass  # tricks are purely visual now; no HUD text
 
 
-func _on_pickup_collected(health: int) -> void:
-	hud.flash_pickup(health)
+func _on_pickup_collected(_health: int) -> void:
 	_play_sfx(_sfx_pickup)
 
 

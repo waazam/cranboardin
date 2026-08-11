@@ -4,10 +4,10 @@ extends CanvasLayer
 ## both "level complete" and "game over". Connected to Player signals by
 ## Main.
 ##
-## On mobile (Android/iOS, native or web) it also builds three big
-## translucent touch buttons -- steer left / steer right / jump -- and
-## the end panels respond to a tap instead of the R key. Desktop keeps
-## keyboard controls and never sees the buttons.
+## On mobile (Android/iOS, native or web) it also builds translucent
+## touch buttons -- a steer/accelerate/brake d-pad plus a jump button --
+## and the end panels respond to a tap instead of the R key. Desktop
+## keeps keyboard controls and never sees the buttons.
 
 signal restart_requested()
 
@@ -18,6 +18,8 @@ var player  # untyped; assigned by Main
 
 var _btn_left: TouchScreenButton
 var _btn_right: TouchScreenButton
+var _btn_up: TouchScreenButton
+var _btn_down: TouchScreenButton
 var _btn_jump: TouchScreenButton
 var _jump_queued: bool = false
 
@@ -28,14 +30,12 @@ var hp_bar_bg: ColorRect
 var hp_bar_fill: ColorRect
 var progress_bg: ColorRect
 var progress_fill: ColorRect
-var message_label: Label
 var hint_label: Label
 var results_layer: Control
 var results_label: Label
 
 var elapsed_time: float = 0.0
 var running: bool = true
-var _message_timer: float = 0.0
 var _hint_timer: float = 4.0
 
 
@@ -97,14 +97,9 @@ func _build_ui() -> void:
 	progress_caption.position = Vector2((viewport_size.x - bar_width) * 0.5, 4)
 	add_child(progress_caption)
 
-	message_label = _make_label("", 34, Color(1, 0.35, 0.3))
-	message_label.visible = false
-	message_label.position = Vector2(viewport_size.x * 0.5 - 110, viewport_size.y * 0.3)
-	add_child(message_label)
-
 	var hint_text := "WASD steer / accelerate / brake   -   SPACE jump over zombies   -   R restart"
 	if is_mobile() or force_touch_controls:
-		hint_text = "Hold the arrows to steer   -   JUMP over zombies"
+		hint_text = "Tilt or use the arrows   -   JUMP over zombies"
 	hint_label = _make_label(hint_text, 16, Color(1, 1, 1, 0.85))
 	hint_label.position = Vector2(viewport_size.x * 0.5 - 300, viewport_size.y - 40)
 	add_child(hint_label)
@@ -143,13 +138,26 @@ func _on_results_input(event: InputEvent) -> void:
 
 func _build_touch_controls() -> void:
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	var btn_size := 144.0
-	var margin := 30.0
-	var y := viewport_size.y - btn_size - margin
 
-	_btn_left = _make_touch_button(_make_button_texture("left"), Vector2(margin, y))
-	_btn_right = _make_touch_button(_make_button_texture("right"), Vector2(margin + btn_size + 18.0, y))
-	_btn_jump = _make_touch_button(_make_button_texture("jump"), Vector2(viewport_size.x - btn_size - margin, y))
+	# D-pad (plus layout) bottom-left: up/down = accelerate/brake,
+	# left/right = steer. Jump stays big on the bottom-right.
+	var cell := 108.0
+	var margin := 24.0
+	var col0 := margin
+	var col1 := margin + cell
+	var col2 := margin + cell * 2.0
+	var row_bottom := viewport_size.y - margin - cell
+	var row_mid := row_bottom - cell
+	var row_top := row_mid - cell
+
+	_btn_up = _make_touch_button(_make_button_texture("up", cell), Vector2(col1, row_top))
+	_btn_left = _make_touch_button(_make_button_texture("left", cell), Vector2(col0, row_mid))
+	_btn_right = _make_touch_button(_make_button_texture("right", cell), Vector2(col2, row_mid))
+	_btn_down = _make_touch_button(_make_button_texture("down", cell), Vector2(col1, row_bottom))
+
+	var jump_size := 150.0
+	_btn_jump = _make_touch_button(_make_button_texture("jump", jump_size),
+			Vector2(viewport_size.x - jump_size - 30.0, viewport_size.y - jump_size - 30.0))
 	_btn_jump.pressed.connect(func() -> void: _jump_queued = true)
 
 
@@ -175,6 +183,18 @@ func get_touch_steer() -> float:
 	return steer
 
 
+## Accelerate/brake from the touch buttons: 1, 0, or -1.
+func get_touch_accel() -> float:
+	if _btn_up == null:
+		return 0.0
+	var accel := 0.0
+	if _btn_up.is_pressed():
+		accel += 1.0
+	if _btn_down.is_pressed():
+		accel -= 1.0
+	return accel
+
+
 ## Edge-triggered jump request from the touch button.
 func consume_touch_jump() -> bool:
 	var queued := _jump_queued
@@ -182,9 +202,9 @@ func consume_touch_jump() -> bool:
 	return queued
 
 
-## A translucent circle with an arrow glyph: "left", "right", or "jump" (up).
-func _make_button_texture(kind: String) -> ImageTexture:
-	var s := 144
+## A translucent circle with an arrow glyph.
+func _make_button_texture(kind: String, size_px: float = 144.0) -> ImageTexture:
+	var s := int(size_px)
 	var img := Image.create_empty(s, s, false, Image.FORMAT_RGBA8)
 	var center := s * 0.5
 	var accent := Color(1.0, 0.55, 0.75)
@@ -212,8 +232,10 @@ func _in_arrow(kind: String, fx: float, fy: float) -> bool:
 			return fx >= 0.32 and fx <= 0.64 and absf(fy - 0.5) <= (fx - 0.32) * 0.62
 		"right":
 			return fx >= 0.36 and fx <= 0.68 and absf(fy - 0.5) <= (0.68 - fx) * 0.62
-		"jump":
+		"up", "jump":
 			return fy >= 0.32 and fy <= 0.64 and absf(fx - 0.5) <= (fy - 0.32) * 0.62
+		"down":
+			return fy >= 0.36 and fy <= 0.68 and absf(fx - 0.5) <= (0.68 - fy) * 0.62
 	return false
 
 
@@ -242,33 +264,11 @@ func _process(delta: float) -> void:
 
 	timer_label.text = "Time: %.1f" % elapsed_time
 
-	if _message_timer > 0.0:
-		_message_timer -= delta
-		message_label.modulate.a = clampf(_message_timer / 0.4, 0.0, 1.0)
-		if _message_timer <= 0.0:
-			message_label.visible = false
-
 	if _hint_timer > 0.0:
 		_hint_timer -= delta
 		hint_label.modulate.a = clampf(_hint_timer / 1.0, 0.0, 1.0)
 		if _hint_timer <= 0.0:
 			hint_label.visible = false
-
-
-func _on_player_damaged(health: int) -> void:
-	if health > 0:
-		_flash_message("ZOMBIE HIT!", Color(1, 0.35, 0.3))
-
-
-func flash_trick(trick_name: String) -> void:
-	_flash_message(trick_name, Color(0.5, 0.92, 0.95))
-
-
-func flash_pickup(health: int) -> void:
-	if player and health > player.max_health:
-		_flash_message("CRANBERRY OVERDRIVE!", Color(0.9, 0.45, 0.6))
-	else:
-		_flash_message("+HP!", Color(0.9, 0.45, 0.6))
 
 
 func show_level_complete(level: int, time: float, top_speed: float) -> void:
@@ -284,20 +284,10 @@ func show_game_over(level: int) -> void:
 	results_layer.visible = true
 
 
-func _flash_message(text: String, color: Color = Color(1, 0.35, 0.3)) -> void:
-	message_label.text = text
-	message_label.add_theme_color_override("font_color", color)
-	message_label.visible = true
-	message_label.modulate.a = 1.0
-	_message_timer = 1.2
-
-
 func reset(level: int) -> void:
 	elapsed_time = 0.0
 	running = true
 	results_layer.visible = false
-	message_label.visible = false
-	_message_timer = 0.0
 	_hint_timer = 4.0
 	hint_label.visible = true
 	hint_label.modulate.a = 1.0

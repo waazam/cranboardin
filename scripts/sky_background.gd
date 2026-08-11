@@ -15,8 +15,10 @@ const BIRD_SCRIPT := preload("res://scripts/bird.gd")
 @export var sky_horizon_color := Color(0.95, 0.42, 0.48)
 @export var building_color := Color(0.16, 0.12, 0.28)
 @export var window_color := Color(1.0, 0.75, 0.4)
-## Distance from the road to the near skyline layer.
-@export var skyline_distance := 60.0
+## Distance from the road to the near skyline layer. Kept well beyond the
+## roadside building slabs (which line the road out to ~40m and fade into
+## fog past ~150m) so the backdrop never slices through them.
+@export var skyline_distance := 190.0
 @export var cloud_count := 18
 @export var bird_count := 10
 ## Time constant (1/s) for the backdrop's vertical follow; low = floaty.
@@ -130,13 +132,13 @@ func _build_skyline() -> void:
 	var farthest_color := building_color.lerp(sky_horizon_color, 0.35)
 	var farthest_windows := window_color.lerp(farthest_color, 0.7)
 	_add_skyline_layer(root, farthest_color, farthest_windows, 0.6,
-			skyline_distance + 55.0, 0.85)
+			skyline_distance + 170.0, 2.7)
 	var far_color := building_color.lerp(sky_horizon_color, 0.2)
 	var far_windows := window_color.lerp(far_color, 0.6)
 	_add_skyline_layer(root, far_color, far_windows, 0.72,
-			skyline_distance + 28.0, 0.66)
+			skyline_distance + 85.0, 2.1)
 	_add_skyline_layer(root, building_color, window_color.lerp(building_color, 0.4), 1.0,
-			skyline_distance, 0.5)
+			skyline_distance, 1.6)
 
 
 func _add_skyline_layer(root: Node3D, silhouette: Color, windows: Color,
@@ -231,14 +233,17 @@ func _build_clouds() -> void:
 	for i in cloud_count:
 		var cloud := MeshInstance3D.new()
 		var mesh := QuadMesh.new()
-		var width: float = _rng.randf_range(10.0, 22.0)
+		var width: float = _rng.randf_range(22.0, 44.0)
 		mesh.size = Vector2(width, width * 0.5)
 		cloud.mesh = mesh
-		cloud.material_override = materials[i % materials.size()]
+		var mat := materials[i % materials.size()]
+		mat.disable_fog = true
+		cloud.material_override = mat
+		# High and far, clear of the roadside building corridor.
 		cloud.position = Vector3(
-			_rng.randf_range(-110.0, 110.0),
-			_rng.randf_range(22.0, 46.0),
-			_rng.randf_range(-100.0, -55.0)
+			_rng.randf_range(-200.0, 200.0),
+			_rng.randf_range(40.0, 80.0),
+			_rng.randf_range(-230.0, -130.0)
 		)
 		root.add_child(cloud)
 
@@ -285,6 +290,9 @@ func _pixel_material(tex: ImageTexture) -> StandardMaterial3D:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	mat.alpha_scissor_threshold = 0.5
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# The skyline sits far beyond the fog falloff; its haze is baked into
+	# the layer colors instead, so exempt it from environment fog.
+	mat.disable_fog = true
 	return mat
 
 
@@ -300,8 +308,8 @@ func _spawn_birds() -> void:
 		bird.set_script(BIRD_SCRIPT)
 		bird.position = Vector3(
 			_rng.randf_range(-60.0, 60.0),
-			_rng.randf_range(18.0, 38.0),
-			_rng.randf_range(-90.0, -45.0)
+			_rng.randf_range(32.0, 52.0),
+			_rng.randf_range(-140.0, -80.0)
 		)
 		bird.radius = _rng.randf_range(12.0, 35.0)
 		bird.speed = _rng.randf_range(0.08, 0.2)

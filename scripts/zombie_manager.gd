@@ -13,6 +13,7 @@ extends Node3D
 ##   AHEAD -- lurks on the road ahead and closes on the player's lateral.
 
 signal zombie_passed(kind: String)  # "over" = cleared airborne, "near" = grazed
+signal zombie_smashed()  # bowled through while boosting
 
 enum SpawnType { SIDE, AHEAD }
 
@@ -34,6 +35,8 @@ var _rng := RandomNumberGenerator.new()
 var _spawns: Array[Dictionary] = []
 var _next_spawn: int = 0
 var _active: Array[Dictionary] = []
+## Zombies mid-launch after a boost smash: {node, vel, spin, t}.
+var _smashed: Array[Dictionary] = []
 var _zombie_material: StandardMaterial3D
 
 
@@ -49,6 +52,9 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	for z in _active:
 		(z["node"] as Node3D).queue_free()
 	_active.clear()
+	for sm in _smashed:
+		(sm["node"] as Node3D).queue_free()
+	_smashed.clear()
 	_next_spawn = 0
 
 	_rng.seed = 5000 + level * 4409
@@ -111,6 +117,13 @@ func _physics_process(delta: float) -> void:
 				and absf(zs - _player.s) < HIT_S_RANGE \
 				and absf(zlat - _player.lateral) < HIT_LATERAL_RANGE \
 				and _player.height < HIT_MAX_HEIGHT:
+			if _player.is_boosting():
+				# Boosting bowls straight through: launch it, no damage.
+				_launch(z, xf)
+				_active.remove_at(i)
+				zombie_smashed.emit()
+				i -= 1
+				continue
 			z["scored"] = true  # no style points off the zombie that got you
 			_player.take_damage(damage_per_hit)
 
@@ -130,6 +143,35 @@ func _physics_process(delta: float) -> void:
 			node.queue_free()
 			_active.remove_at(i)
 		i -= 1
+
+	_update_smashed(delta)
+
+
+## Ragdoll-ish arc for smashed zombies: up, aside, and down-road, spinning.
+func _launch(z: Dictionary, xf: Transform3D) -> void:
+	var side := 1.0 if _rng.randf() < 0.5 else -1.0
+	_smashed.append({
+		"node": z["node"],
+		"vel": xf.basis.y * 7.0 + xf.basis.x * side * 4.0 \
+				- xf.basis.z * _player.current_speed * 0.5,
+		"spin": Vector3(_rng.randf_range(4.0, 9.0), _rng.randf_range(-6.0, 6.0), 0.0),
+		"t": 0.0,
+	})
+
+
+func _update_smashed(delta: float) -> void:
+	var j := _smashed.size() - 1
+	while j >= 0:
+		var sm := _smashed[j]
+		sm["t"] += delta
+		sm["vel"] += Vector3.DOWN * 20.0 * delta
+		var node := sm["node"] as Node3D
+		node.position += sm["vel"] * delta
+		node.rotation += sm["spin"] * delta
+		if sm["t"] > 1.3:
+			node.queue_free()
+			_smashed.remove_at(j)
+		j -= 1
 
 
 func _activate(spawn: Dictionary) -> void:

@@ -41,6 +41,7 @@ const SCORE_TRICK := 150
 const SCORE_OVER := 200
 const SCORE_NEAR := 75
 const SCORE_BOOST := 50
+const SCORE_SMASH := 125
 const SCORE_FINISH := 500
 
 var score: int = 0
@@ -81,6 +82,7 @@ func _ready() -> void:
 	player.finished.connect(_on_player_finished)
 	pickups.collected.connect(_on_pickup_collected)
 	zombies.zombie_passed.connect(_on_zombie_passed)
+	zombies.zombie_smashed.connect(_on_zombie_smashed)
 	boosts.boosted.connect(_on_boost)
 
 	_load_best()
@@ -168,6 +170,11 @@ func _on_trick_landed(_trick_name: String) -> void:
 
 func _on_zombie_passed(kind: String) -> void:
 	_add_score(SCORE_OVER if kind == "over" else SCORE_NEAR)
+
+
+func _on_zombie_smashed() -> void:
+	_add_score(SCORE_SMASH)
+	_play_sfx(_sfx_hit, 1.5)  # pitched-up crunch, distinct from taking damage
 
 
 func _on_boost() -> void:

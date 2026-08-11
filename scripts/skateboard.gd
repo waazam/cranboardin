@@ -8,7 +8,7 @@ class_name Skateboard
 ## in proportion to actual ground speed.
 
 @export var deck_color := Color(0.1, 0.1, 0.12)
-@export var wheel_color := Color(0.95, 0.9, 0.55)
+@export var wheel_color := Color(0.88, 0.86, 0.78)
 
 # Proportioned to the rider (the ~1.65m mannequin in character.gd), matching
 # real skateboard ratios: deck just under half the rider's height.

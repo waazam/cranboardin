@@ -19,7 +19,7 @@ func _ready() -> void:
 
 func _build_visual() -> void:
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.04, 0.04, 0.06)
+	mat.albedo_color = Color(0.24, 0.26, 0.3)
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	for side in [-1.0, 1.0]:

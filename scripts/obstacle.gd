@@ -36,7 +36,7 @@ func _setup_cone() -> void:
 	mesh.height = 0.75
 	mesh_instance.mesh = mesh
 	_place(Vector3(0.8, 0.75, 0.8))
-	_apply_color(Color(0.95, 0.45, 0.08))
+	_apply_color(Color(0.78, 0.45, 0.25))
 
 
 func _setup_rail() -> void:
@@ -45,7 +45,7 @@ func _setup_rail() -> void:
 	mesh.size = Vector3(2.6, 0.5, 0.35)
 	mesh_instance.mesh = mesh
 	_place(Vector3(2.6, 0.5, 0.6))
-	_apply_color(Color(0.82, 0.1, 0.14))
+	_apply_color(Color(0.55, 0.28, 0.26))
 
 
 func _setup_crate() -> void:
@@ -54,7 +54,7 @@ func _setup_crate() -> void:
 	mesh.size = Vector3(0.85, 0.85, 0.85)
 	mesh_instance.mesh = mesh
 	_place(Vector3(0.85, 0.85, 0.85))
-	_apply_color(Color(0.55, 0.37, 0.2))
+	_apply_color(Color(0.5, 0.42, 0.32))
 
 
 func _setup_ramp() -> void:
@@ -64,7 +64,7 @@ func _setup_ramp() -> void:
 	mesh.left_to_right = 0.0
 	mesh_instance.mesh = mesh
 	_place(Vector3(1.8, 0.85, 2.4))
-	_apply_color(Color(0.2, 0.55, 0.92))
+	_apply_color(Color(0.38, 0.48, 0.6))
 
 
 ## Positions the mesh + collision shape so the obstacle sits flush on the

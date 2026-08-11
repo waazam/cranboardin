@@ -38,7 +38,7 @@ func _build_ui() -> void:
 	stats_box.add_child(speed_label)
 	timer_label = _make_label("Time: 0.0", 18, Color(0.9, 0.9, 0.9))
 	stats_box.add_child(timer_label)
-	crash_label = _make_label("Crashes: 0", 18, Color(1.0, 0.55, 0.55))
+	crash_label = _make_label("Crashes: 0", 18, Color(0.92, 0.72, 0.66))
 	stats_box.add_child(crash_label)
 
 	var bar_width := 320.0

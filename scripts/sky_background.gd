@@ -11,10 +11,10 @@ extends Node3D
 
 const BIRD_SCRIPT := preload("res://scripts/bird.gd")
 
-@export var sky_top_color := Color(0.10, 0.08, 0.24)
-@export var sky_horizon_color := Color(0.92, 0.55, 0.42)
-@export var building_color := Color(0.07, 0.06, 0.11)
-@export var window_color := Color(1.0, 0.85, 0.45)
+@export var sky_top_color := Color(0.47, 0.60, 0.74)
+@export var sky_horizon_color := Color(0.84, 0.83, 0.79)
+@export var building_color := Color(0.36, 0.40, 0.47)
+@export var window_color := Color(0.88, 0.84, 0.72)
 ## Distance from the road to the near skyline layer.
 @export var skyline_distance := 60.0
 @export var cloud_count := 18
@@ -75,7 +75,20 @@ func _setup_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 1.15
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+
+	# Depth fog is what visually glues road, scenery, and skyline into one
+	# atmosphere; aerial perspective shifts far fog toward the sky color.
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.80, 0.82, 0.85)
+	env.fog_density = 0.006
+	env.fog_sky_affect = 0.1
+	env.fog_aerial_perspective = 0.5
+
+	# Gentle global desaturation calms the palette without flattening it.
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 0.9
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
@@ -83,10 +96,12 @@ func _setup_environment() -> void:
 
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-35, -35, 0)
-	sun.light_color = Color(1.0, 0.87, 0.72)
-	sun.light_energy = 1.1
+	sun.rotation_degrees = Vector3(-42, -30, 0)
+	sun.light_color = Color(1.0, 0.97, 0.9)
+	sun.light_energy = 0.75
 	sun.shadow_enabled = true
+	sun.shadow_blur = 1.8
+	sun.shadow_opacity = 0.65
 	add_child(sun)
 
 
@@ -97,18 +112,21 @@ func _build_skyline() -> void:
 	root.name = "Skyline"
 	_follow_root.add_child(root)
 
-	# Three parallax layers, hazier (tinted toward the horizon color) and
-	# chunkier-pixeled the further back they sit. Near layer: full
-	# silhouette color.
-	var farthest_color := building_color.lerp(sky_horizon_color, 0.65)
-	var farthest_windows := window_color.lerp(sky_horizon_color, 0.55)
+	# Three parallax layers, mildly hazed toward the horizon color the
+	# further back they sit -- kept subtle, because the environment fog
+	# already does the heavy atmospheric lifting; over-hazing here washed
+	# the silhouettes out entirely and left the lit windows floating in
+	# the sky. Windows are dimmed toward their layer's silhouette so they
+	# read as facade texture, not lights.
+	var farthest_color := building_color.lerp(sky_horizon_color, 0.35)
+	var farthest_windows := window_color.lerp(farthest_color, 0.7)
 	_add_skyline_layer(root, farthest_color, farthest_windows, 0.6,
 			skyline_distance + 55.0, 0.85)
-	var far_color := building_color.lerp(sky_horizon_color, 0.45)
-	var far_windows := window_color.lerp(sky_horizon_color, 0.35)
+	var far_color := building_color.lerp(sky_horizon_color, 0.2)
+	var far_windows := window_color.lerp(far_color, 0.6)
 	_add_skyline_layer(root, far_color, far_windows, 0.72,
 			skyline_distance + 28.0, 0.66)
-	_add_skyline_layer(root, building_color, window_color, 1.0,
+	_add_skyline_layer(root, building_color, window_color.lerp(building_color, 0.4), 1.0,
 			skyline_distance, 0.5)
 
 
@@ -148,12 +166,13 @@ func _make_skyline_texture(silhouette: Color, windows: Color,
 			for py in range(h - bh, h):
 				img.set_pixel(px, py, col)
 
-		# Lit windows: 2x2 pixel blocks on a regular grid, randomly on.
+		# Lit windows: 2x2 pixel blocks on a regular grid, sparsely on
+		# (daytime -- most windows just read as glass, not lamps).
 		var wy := h - bh + 3
 		while wy < h - 3:
 			var wx := x + 2
 			while wx < x_end - 3:
-				if _rng.randf() < 0.4:
+				if _rng.randf() < 0.08:
 					for dx in 2:
 						for dy in 2:
 							img.set_pixel(wx + dx, wy + dy, windows)
@@ -179,10 +198,16 @@ func _build_clouds() -> void:
 	root.name = "Clouds"
 	_follow_root.add_child(root)
 
-	# A few texture variants shared across all cloud quads.
+	# A few texture variants shared across all cloud quads. Unlike the
+	# skyline strips, clouds use smooth alpha + linear filtering so they
+	# read as soft haze rather than hard-edged sprites.
 	var materials: Array[StandardMaterial3D] = []
 	for i in 3:
-		var mat := _pixel_material(_make_cloud_texture())
+		var mat := StandardMaterial3D.new()
+		mat.albedo_texture = _make_cloud_texture()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mat.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
 		materials.append(mat)
 
@@ -202,26 +227,32 @@ func _build_clouds() -> void:
 
 
 func _make_cloud_texture() -> ImageTexture:
-	var w := 28
-	var h := 14
+	var w := 48
+	var h := 24
 	var img := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
-	var body := Color(0.98, 0.96, 0.94, 1.0)
-	var shade := Color(0.82, 0.76, 0.8, 1.0)
+	var body := Color(0.96, 0.96, 0.97)
 
-	# A cloud is a handful of overlapping pixel "blobs" (rasterized ellipses).
-	var blob_count: int = _rng.randi_range(3, 5)
+	# A cloud is overlapping soft ellipse blobs; alpha falls off smoothly
+	# from each blob's center, and overlaps take the strongest falloff.
+	var blob_count: int = _rng.randi_range(4, 6)
+	var blobs: Array[Vector4] = []
 	for b in blob_count:
-		var cx: float = _rng.randf_range(6.0, w - 6.0)
-		var cy: float = _rng.randf_range(4.0, h - 4.0)
-		var rx: float = _rng.randf_range(4.0, 8.0)
-		var ry: float = _rng.randf_range(2.5, 4.5)
-		for px in w:
-			for py in h:
-				var dx := (px - cx) / rx
-				var dy := (py - cy) / ry
-				if dx * dx + dy * dy <= 1.0:
-					# Flat-shaded top, darker underside.
-					img.set_pixel(px, py, body if py < cy + 1.0 else shade)
+		blobs.append(Vector4(
+			_rng.randf_range(10.0, w - 10.0),
+			_rng.randf_range(6.0, h - 6.0),
+			_rng.randf_range(6.0, 12.0),
+			_rng.randf_range(3.5, 6.0)
+		))
+
+	for px in w:
+		for py in h:
+			var a := 0.0
+			for blob in blobs:
+				var dx := (px - blob.x) / blob.z
+				var dy := (py - blob.y) / blob.w
+				var falloff: float = clampf(1.0 - sqrt(dx * dx + dy * dy), 0.0, 1.0)
+				a = maxf(a, pow(falloff, 1.6))
+			img.set_pixel(px, py, Color(body.r, body.g, body.b, a * 0.85))
 
 	return ImageTexture.create_from_image(img)
 

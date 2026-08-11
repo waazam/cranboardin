@@ -19,6 +19,9 @@ const OBSTACLE_SCENE := preload("res://scenes/obstacle.tscn")
 
 var ramp_thickness: float = 2.0
 var overrun: float = 25.0
+## Extra ramp behind the start line, so the camera never sees the slab's
+## raw cut face during the opening frames.
+var back_overrun: float = 30.0
 
 ## Public data consumed by Player.setup().
 var forward_tangent: Vector3
@@ -54,10 +57,10 @@ func _build_ramp() -> void:
 	var total_length := track_length + overrun
 	var mesh_instance := MeshInstance3D.new()
 	var box := BoxMesh.new()
-	box.size = Vector3(track_width, ramp_thickness, total_length)
+	box.size = Vector3(track_width, ramp_thickness, total_length + back_overrun)
 	mesh_instance.mesh = box
-	mesh_instance.position = Vector3(0, -ramp_thickness * 0.5, -total_length * 0.5)
-	mesh_instance.material_override = _flat_mat(Color(0.17, 0.17, 0.19))
+	mesh_instance.position = Vector3(0, -ramp_thickness * 0.5, (back_overrun - total_length) * 0.5)
+	mesh_instance.material_override = _flat_mat(Color(0.30, 0.30, 0.32))
 	ramp_body.add_child(mesh_instance)
 
 	var coll := CollisionShape3D.new()
@@ -73,7 +76,7 @@ func _build_ramp() -> void:
 
 
 func _add_center_dashes(total_length: float) -> void:
-	var dash_mat := _flat_mat(Color(0.9, 0.85, 0.3))
+	var dash_mat := _flat_mat(Color(0.72, 0.70, 0.58))
 	var z := -4.0
 	while z > -total_length + 4.0:
 		var dash := MeshInstance3D.new()
@@ -88,7 +91,7 @@ func _add_center_dashes(total_length: float) -> void:
 
 func _build_boundaries() -> void:
 	var total_length := track_length + overrun
-	var wall_start_z := 2.0
+	var wall_start_z := back_overrun
 	var wall_end_z := -total_length
 	var wall_length := wall_start_z - wall_end_z
 	var wall_center_z := (wall_start_z + wall_end_z) * 0.5
@@ -102,7 +105,7 @@ func _build_boundaries() -> void:
 		var box := BoxMesh.new()
 		box.size = Vector3(0.6, 1.6, wall_length)
 		mesh.mesh = box
-		mesh.material_override = _flat_mat(Color(0.85, 0.85, 0.88))
+		mesh.material_override = _flat_mat(Color(0.52, 0.52, 0.54))
 		mesh.position = Vector3(side * (track_width * 0.5 + 0.3), 0.8, wall_center_z)
 		wall.add_child(mesh)
 
@@ -125,7 +128,7 @@ func _build_finish_banner() -> void:
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3(0.3, 3.0, 0.3)
 		post.mesh = mesh
-		post.material_override = _flat_mat(Color(0.9, 0.1, 0.12))
+		post.material_override = _flat_mat(Color(0.58, 0.26, 0.24))
 		post.position = Vector3(side * (track_width * 0.5 - 0.2), 1.5, z)
 		banner.add_child(post)
 
@@ -133,7 +136,7 @@ func _build_finish_banner() -> void:
 	var bar_mesh := BoxMesh.new()
 	bar_mesh.size = Vector3(track_width - 0.2, 0.3, 0.3)
 	bar.mesh = bar_mesh
-	bar.material_override = _flat_mat(Color(0.95, 0.85, 0.1))
+	bar.material_override = _flat_mat(Color(0.78, 0.71, 0.5))
 	bar.position = Vector3(0, 3.0, z)
 	banner.add_child(bar)
 
@@ -193,7 +196,7 @@ func _build_scenery() -> void:
 
 	# Manhole covers down the road surface.
 	z = -30.0
-	var mh_mat := _flat_mat(Color(0.09, 0.09, 0.1))
+	var mh_mat := _flat_mat(Color(0.22, 0.22, 0.23))
 	while z > -track_length:
 		var mh := MeshInstance3D.new()
 		var disc := CylinderMesh.new()
@@ -238,11 +241,10 @@ func _add_streetlight(parent: Node3D, pos: Vector3, toward_road: float, slope_ra
 	lamp.mesh = lamp_mesh
 	lamp.position = Vector3(toward_road * 0.95, 4.1, 0)
 	var lamp_mat := StandardMaterial3D.new()
-	lamp_mat.albedo_color = Color(1.0, 0.9, 0.6)
-	lamp_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	lamp_mat.albedo_color = Color(0.92, 0.9, 0.82)
 	lamp_mat.emission_enabled = true
-	lamp_mat.emission = Color(1.0, 0.85, 0.5)
-	lamp_mat.emission_energy_multiplier = 2.0
+	lamp_mat.emission = Color(1.0, 0.9, 0.7)
+	lamp_mat.emission_energy_multiplier = 0.5
 	lamp.material_override = lamp_mat
 	item.add_child(lamp)
 
@@ -261,23 +263,24 @@ func _add_tree(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumbe
 	trunk_mesh.height = trunk_h
 	trunk.mesh = trunk_mesh
 	trunk.position = Vector3(0, trunk_h * 0.5, 0)
-	trunk.material_override = _flat_mat(Color(0.32, 0.22, 0.13))
+	trunk.material_override = _flat_mat(Color(0.35, 0.27, 0.2))
 	item.add_child(trunk)
 
-	# Blocky stacked-cube foliage to match the pixel-art vibe.
-	var green := Color(0.13, 0.35 + srng.randf_range(0.0, 0.12), 0.16)
-	var size := srng.randf_range(1.4, 2.0)
-	var y := trunk_h + size * 0.35
+	# Rounded canopy: overlapping soft spheres in muted greens.
+	var green := Color(0.28, 0.38 + srng.randf_range(0.0, 0.08), 0.26)
+	var radius := srng.randf_range(0.8, 1.2)
+	var y := trunk_h + radius * 0.6
 	for layer in 2:
 		var leaves := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3.ONE * size
-		leaves.mesh = box
-		leaves.position = Vector3(0, y, 0)
-		leaves.material_override = _flat_mat(green.lightened(layer * 0.12))
+		var ball := SphereMesh.new()
+		ball.radius = radius
+		ball.height = radius * 1.8
+		leaves.mesh = ball
+		leaves.position = Vector3(srng.randf_range(-0.2, 0.2), y, srng.randf_range(-0.2, 0.2))
+		leaves.material_override = _flat_mat(green.lightened(layer * 0.08))
 		item.add_child(leaves)
-		y += size * 0.55
-		size *= 0.65
+		y += radius * 0.7
+		radius *= 0.7
 
 
 func _add_bush(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumberGenerator) -> void:
@@ -287,12 +290,13 @@ func _add_bush(parent: Node3D, pos: Vector3, slope_rad: float, srng: RandomNumbe
 	parent.add_child(item)
 
 	var bush := MeshInstance3D.new()
-	var box := BoxMesh.new()
+	var ball := SphereMesh.new()
 	var size := srng.randf_range(0.5, 0.9)
-	box.size = Vector3(size * 1.3, size, size * 1.3)
-	bush.mesh = box
-	bush.position = Vector3(0, size * 0.45, 0)
-	bush.material_override = _flat_mat(Color(0.16, 0.4, 0.18))
+	ball.radius = size * 0.65
+	ball.height = size
+	bush.mesh = ball
+	bush.position = Vector3(0, size * 0.42, 0)
+	bush.material_override = _flat_mat(Color(0.3, 0.4, 0.28))
 	item.add_child(bush)
 
 
@@ -319,7 +323,7 @@ func _add_hydrant(parent: Node3D, pos: Vector3, slope_rad: float) -> void:
 	item.rotation.x = slope_rad
 	parent.add_child(item)
 
-	var red := _flat_mat(Color(0.75, 0.12, 0.1))
+	var red := _flat_mat(Color(0.55, 0.24, 0.2))
 	var body := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.11
@@ -359,7 +363,7 @@ func _add_building_slab(parent: Node3D, side: float, z: float, width: float,
 	box.size = Vector3(d, h, width)
 	slab.mesh = box
 	slab.position = Vector3(0, h * 0.5, 0)
-	slab.material_override = _flat_mat(Color(0.1 + shade, 0.09 + shade, 0.14 + shade))
+	slab.material_override = _flat_mat(Color(0.38 + shade, 0.40 + shade, 0.44 + shade))
 	item.add_child(slab)
 
 	# Pixel-art window face toward the road.
@@ -377,16 +381,16 @@ func _make_window_material(srng: RandomNumberGenerator) -> StandardMaterial3D:
 	var w := 20
 	var h := 28
 	var img := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
-	var facade := Color(0.08, 0.07, 0.12, 1.0)
-	var lit := Color(1.0, 0.85, 0.45, 1.0)
-	var dark := Color(0.13, 0.12, 0.18, 1.0)
+	var facade := Color(0.34, 0.36, 0.40, 1.0)
+	var lit := Color(0.85, 0.78, 0.6, 1.0)
+	var glass := Color(0.45, 0.5, 0.56, 1.0)
 
 	img.fill(facade)
 	var y := 2
 	while y < h - 2:
 		var x := 2
 		while x < w - 2:
-			var col := lit if srng.randf() < 0.35 else dark
+			var col := lit if srng.randf() < 0.12 else glass
 			for dx in 2:
 				for dy in 2:
 					img.set_pixel(x + dx, y + dy, col)
@@ -396,7 +400,8 @@ func _make_window_material(srng: RandomNumberGenerator) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = ImageTexture.create_from_image(img)
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Shaded, so facades pick up the sun and fog like the rest of the world.
+	mat.roughness = 0.9
 	return mat
 
 

@@ -3,8 +3,23 @@ extends CanvasLayer
 ## bar, hit flash message, fading control hint, and an end panel used for
 ## both "level complete" and "game over". Connected to Player signals by
 ## Main.
+##
+## On mobile (Android/iOS, native or web) it also builds three big
+## translucent touch buttons -- steer left / steer right / jump -- and
+## the end panels respond to a tap instead of the R key. Desktop keeps
+## keyboard controls and never sees the buttons.
+
+signal restart_requested()
+
+## Force the touch buttons on (useful for testing or touch laptops).
+@export var force_touch_controls: bool = false
 
 var player  # untyped; assigned by Main
+
+var _btn_left: TouchScreenButton
+var _btn_right: TouchScreenButton
+var _btn_jump: TouchScreenButton
+var _jump_queued: bool = false
 
 var speed_label: Label
 var timer_label: Label
@@ -26,6 +41,13 @@ var _hint_timer: float = 4.0
 
 func _ready() -> void:
 	_build_ui()
+	if is_mobile() or force_touch_controls:
+		_build_touch_controls()
+
+
+static func is_mobile() -> bool:
+	return OS.has_feature("web_android") or OS.has_feature("web_ios") \
+			or OS.has_feature("android") or OS.has_feature("ios")
 
 
 func _build_ui() -> void:
@@ -80,7 +102,10 @@ func _build_ui() -> void:
 	message_label.position = Vector2(viewport_size.x * 0.5 - 110, viewport_size.y * 0.3)
 	add_child(message_label)
 
-	hint_label = _make_label("WASD steer / accelerate / brake   -   SPACE jump over zombies   -   R restart", 16, Color(1, 1, 1, 0.85))
+	var hint_text := "WASD steer / accelerate / brake   -   SPACE jump over zombies   -   R restart"
+	if is_mobile() or force_touch_controls:
+		hint_text = "Hold the arrows to steer   -   JUMP over zombies"
+	hint_label = _make_label(hint_text, 16, Color(1, 1, 1, 0.85))
 	hint_label.position = Vector2(viewport_size.x * 0.5 - 300, viewport_size.y - 40)
 	add_child(hint_label)
 
@@ -93,6 +118,8 @@ func _build_ui() -> void:
 	dim.color = Color(0, 0, 0, 0.55)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	results_layer.add_child(dim)
+	# End panels restart on tap/click (the mobile equivalent of R).
+	dim.gui_input.connect(_on_results_input)
 
 	results_label = _make_label("", 26, Color(1, 1, 1))
 	results_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -100,6 +127,94 @@ func _build_ui() -> void:
 	results_label.size = Vector2(480, 260)
 	results_label.position = Vector2((viewport_size.x - 480) * 0.5, (viewport_size.y - 260) * 0.5)
 	results_layer.add_child(results_label)
+
+
+func _on_results_input(event: InputEvent) -> void:
+	var tapped: bool = (event is InputEventScreenTouch and event.pressed) \
+			or (event is InputEventMouseButton and event.pressed)
+	if tapped and results_layer.visible:
+		# Hide first: mobile browsers synthesize a mouse event after the
+		# touch event, and this guard keeps the pair from firing twice.
+		results_layer.visible = false
+		restart_requested.emit()
+
+
+# --- Touch controls (mobile only) -------------------------------------------
+
+func _build_touch_controls() -> void:
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var btn_size := 144.0
+	var margin := 30.0
+	var y := viewport_size.y - btn_size - margin
+
+	_btn_left = _make_touch_button(_make_button_texture("left"), Vector2(margin, y))
+	_btn_right = _make_touch_button(_make_button_texture("right"), Vector2(margin + btn_size + 18.0, y))
+	_btn_jump = _make_touch_button(_make_button_texture("jump"), Vector2(viewport_size.x - btn_size - margin, y))
+	_btn_jump.pressed.connect(func() -> void: _jump_queued = true)
+
+
+func _make_touch_button(texture: ImageTexture, pos: Vector2) -> TouchScreenButton:
+	var btn := TouchScreenButton.new()
+	btn.texture_normal = texture
+	btn.position = pos
+	# Sliding a thumb across the steer buttons should switch them.
+	btn.passby_press = true
+	add_child(btn)
+	return btn
+
+
+## Steering from the touch buttons: -1, 0, or 1.
+func get_touch_steer() -> float:
+	if _btn_left == null:
+		return 0.0
+	var steer := 0.0
+	if _btn_left.is_pressed():
+		steer -= 1.0
+	if _btn_right.is_pressed():
+		steer += 1.0
+	return steer
+
+
+## Edge-triggered jump request from the touch button.
+func consume_touch_jump() -> bool:
+	var queued := _jump_queued
+	_jump_queued = false
+	return queued
+
+
+## A translucent circle with an arrow glyph: "left", "right", or "jump" (up).
+func _make_button_texture(kind: String) -> ImageTexture:
+	var s := 144
+	var img := Image.create_empty(s, s, false, Image.FORMAT_RGBA8)
+	var center := s * 0.5
+	var accent := Color(1.0, 0.55, 0.75)
+
+	for px in s:
+		for py in s:
+			var d := Vector2(px - center, py - center).length() / center
+			if d > 1.0:
+				continue
+			var col := Color(1, 1, 1, 0.16)
+			if d > 0.86:
+				col = Color(accent.r, accent.g, accent.b, 0.55)
+			var fx := px / float(s)
+			var fy := py / float(s)
+			if _in_arrow(kind, fx, fy):
+				col = Color(accent.r, accent.g, accent.b, 0.9)
+			img.set_pixel(px, py, col)
+
+	return ImageTexture.create_from_image(img)
+
+
+func _in_arrow(kind: String, fx: float, fy: float) -> bool:
+	match kind:
+		"left":
+			return fx >= 0.32 and fx <= 0.64 and absf(fy - 0.5) <= (fx - 0.32) * 0.62
+		"right":
+			return fx >= 0.36 and fx <= 0.68 and absf(fy - 0.5) <= (0.68 - fx) * 0.62
+		"jump":
+			return fy >= 0.32 and fy <= 0.64 and absf(fx - 0.5) <= (fy - 0.32) * 0.62
+	return false
 
 
 func _make_label(text: String, size: int, color: Color) -> Label:
@@ -143,6 +258,10 @@ func _process(delta: float) -> void:
 func _on_player_damaged(health: int) -> void:
 	if health > 0:
 		_flash_message("ZOMBIE HIT!", Color(1, 0.35, 0.3))
+
+
+func flash_trick(trick_name: String) -> void:
+	_flash_message(trick_name, Color(0.5, 0.92, 0.95))
 
 
 func flash_pickup(health: int) -> void:

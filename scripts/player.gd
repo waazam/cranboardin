@@ -14,6 +14,7 @@ extends CharacterBody3D
 signal damaged(health: int)
 signal died()
 signal jumped()
+signal tricked(trick_name: String)
 signal finished(time: float, top_speed: float)
 
 enum RunState { RUNNING, DEAD, FINISHED }
@@ -48,11 +49,20 @@ var elapsed: float = 0.0
 var run_state: RunState = RunState.RUNNING
 
 var _track: Node3D
+## Duck-typed HUD ref (set by Main); provides get_touch_steer() and
+## consume_touch_jump() on mobile, null-safe on desktop.
+var touch_controls = null
 var _invulnerable_timer: float = 0.0
 var _coyote_timer: float = 0.0
 var _jump_buffer_timer: float = 0.0
 var _lateral_velocity: float = 0.0
 var _lean_amount: float = 0.0
+
+## Air tricks alternate per jump: kickflip (board-only roll, handled by
+## Skateboard) then 360 spin (whole rig yaws, handled here).
+var _trick_index: int = 0
+var _spin_duration: float = 0.7
+var _spin_time_left: float = 0.0
 
 ## Visual rig: `visuals` is the tuck/blink pivot; board and rider are
 ## separate entities beneath it (skateboard.gd / character.gd).
@@ -98,6 +108,10 @@ func reset_run() -> void:
 	visuals.visible = true
 	visuals.rotation = Vector3.ZERO
 	skateboard.rotation = Vector3.ZERO
+	skateboard.finish_trick()
+	skateboard.set_carve(0.0)
+	_trick_index = 0
+	_spin_time_left = 0.0
 	character.reset()
 	_apply_transform()
 
@@ -122,6 +136,8 @@ func _poll_jump_input() -> void:
 	if jump_held and not _jump_held_prev:
 		_jump_buffer_timer = jump_buffer_time
 	_jump_held_prev = jump_held
+	if touch_controls and touch_controls.consume_touch_jump():
+		_jump_buffer_timer = jump_buffer_time
 
 
 func _physics_process(delta: float) -> void:
@@ -152,6 +168,8 @@ func _physics_process(delta: float) -> void:
 		height = maxf(height, 0.002)
 		_jump_buffer_timer = 0.0
 		_coyote_timer = 0.0
+		grounded = false
+		_start_trick()
 		jumped.emit()
 	elif not grounded:
 		_vertical_velocity -= gravity * delta
@@ -166,6 +184,7 @@ func _physics_process(delta: float) -> void:
 
 	_apply_transform()
 	_update_lean(steer_input, delta)
+	_update_trick(delta, height <= 0.001)
 	skateboard.update_roll(current_speed, delta)
 	character.update_motion(height <= 0.001)
 
@@ -184,7 +203,9 @@ func _steer_axis() -> float:
 		axis -= 1.0
 	if Input.is_physical_key_pressed(KEY_D):
 		axis += 1.0
-	return axis
+	if touch_controls:
+		axis += touch_controls.get_touch_steer()
+	return clampf(axis, -1.0, 1.0)
 
 
 func _update_speed(delta: float) -> void:
@@ -212,10 +233,33 @@ func _update_invulnerability(delta: float) -> void:
 ## speed tuck.
 func _update_lean(steer_input: float, delta: float) -> void:
 	_lean_amount = lerpf(_lean_amount, steer_input, 10.0 * delta)
-	skateboard.rotation.z = -_lean_amount * 0.22
+	skateboard.set_carve(-_lean_amount * 0.22)
 	character.set_lean(_lean_amount * 0.45)
 	var target_pitch := -0.1 - get_speed_ratio() * 0.15
 	visuals.rotation.x = lerp_angle(visuals.rotation.x, target_pitch, 6.0 * delta)
+
+
+func _start_trick() -> void:
+	_trick_index += 1
+	if _trick_index % 2 == 1:
+		skateboard.do_kickflip(0.5)
+		tricked.emit("KICKFLIP!")
+	else:
+		_spin_time_left = _spin_duration
+		tricked.emit("360 SPIN!")
+
+
+## Runs the 360 spin and cancels tricks cleanly on landing.
+func _update_trick(delta: float, grounded: bool) -> void:
+	if grounded:
+		if _spin_time_left > 0.0:
+			_spin_time_left = 0.0
+			visuals.rotation.y = 0.0
+		skateboard.finish_trick()
+		return
+	if _spin_time_left > 0.0:
+		_spin_time_left = maxf(_spin_time_left - delta, 0.0)
+		visuals.rotation.y = TAU * (1.0 - _spin_time_left / _spin_duration) if _spin_time_left > 0.0 else 0.0
 
 
 ## Called by cranberry bottle pickups. Heals to max; if already at or

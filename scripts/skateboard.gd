@@ -18,9 +18,37 @@ const DECK_TOP_HEIGHT := WHEEL_RADIUS + 0.06 + 0.05
 
 var _wheels: Array[MeshInstance3D] = []
 
+## Carve roll set by Player each tick; combined with any active kickflip.
+var _carve: float = 0.0
+var _flip_duration: float = 0.5
+var _flip_time_left: float = 0.0
+
 
 func _ready() -> void:
 	_build()
+
+
+func set_carve(angle: float) -> void:
+	_carve = angle
+
+
+## Kickflip: the board alone rolls a full 360 about its long axis.
+func do_kickflip(duration: float = 0.5) -> void:
+	_flip_duration = duration
+	_flip_time_left = duration
+
+
+func finish_trick() -> void:
+	_flip_time_left = 0.0
+
+
+func _physics_process(delta: float) -> void:
+	var flip_angle := 0.0
+	if _flip_time_left > 0.0:
+		_flip_time_left = maxf(_flip_time_left - delta, 0.0)
+		if _flip_time_left > 0.0:
+			flip_angle = TAU * (1.0 - _flip_time_left / _flip_duration)
+	rotation.z = _carve + flip_angle
 
 
 func _build() -> void:

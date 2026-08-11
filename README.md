@@ -10,6 +10,8 @@ longer hill with a bigger horde.
 
 ## Controls
 
+**PC:**
+
 | Key         | Action                                    |
 |-------------|-------------------------------------------|
 | `W`         | Accelerate                                 |
@@ -17,6 +19,14 @@ longer hill with a bigger horde.
 | `A` / `D`   | Steer left / right                         |
 | `Space`     | Jump (clears zombies; coyote time + buffer)|
 | `R`         | Restart / next level / retry               |
+
+**Mobile (Android/iOS, auto-detected):** three on-screen buttons --
+hold the left/right arrows to steer, tap the jump button to hop, and
+tap the end screens to continue. Speed is automatic. Pixelation is
+chunkier on mobile (1/4 res vs 1/3 on desktop).
+
+Every jump alternates between two air tricks: a **kickflip** (the
+board rolls under you) and a **360 spin** (the whole rider spins).
 
 ## How it plays
 

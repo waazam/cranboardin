@@ -12,9 +12,10 @@ extends Node3D
 
 enum GameState { RUNNING, LEVEL_COMPLETE, GAME_OVER }
 
-# The 3D world lives in a quarter-res SubViewport upscaled with nearest
+# The 3D world lives in a low-res SubViewport upscaled with nearest
 # filtering -- that's the full-screen pixelation. The HUD stays outside
 # at native res.
+@onready var viewport_frame = $ViewportFrame
 @onready var background = $ViewportFrame/SubViewport/Background
 @onready var track = $ViewportFrame/SubViewport/Track
 @onready var zombies = $ViewportFrame/SubViewport/Zombies
@@ -37,15 +38,22 @@ var _sfx_pickup: AudioStream
 
 
 func _ready() -> void:
+	# Chunkier pixels on mobile (1/4 res vs 1/3 on desktop).
+	if hud.is_mobile():
+		viewport_frame.stretch_shrink = 4
+
 	_setup_audio()
 
 	camera_rig.target = player
 	background.set_follow_target(player)
 	hud.player = player
+	player.touch_controls = hud
+	hud.restart_requested.connect(_advance_or_restart)
 
 	player.damaged.connect(_on_player_damaged)
 	player.died.connect(_on_player_died)
 	player.jumped.connect(_on_player_jumped)
+	player.tricked.connect(_on_player_tricked)
 	player.finished.connect(_on_player_finished)
 	pickups.collected.connect(_on_pickup_collected)
 
@@ -71,9 +79,13 @@ func _process(_delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_R:
-		if state == GameState.LEVEL_COMPLETE:
-			level += 1
-		_start_level()
+		_advance_or_restart()
+
+
+func _advance_or_restart() -> void:
+	if state == GameState.LEVEL_COMPLETE:
+		level += 1
+	_start_level()
 
 
 func _on_player_damaged(health: int) -> void:
@@ -88,6 +100,10 @@ func _on_player_died() -> void:
 
 func _on_player_jumped() -> void:
 	_play_sfx(_sfx_jump)
+
+
+func _on_player_tricked(trick_name: String) -> void:
+	hud.flash_trick(trick_name)
 
 
 func _on_pickup_collected(health: int) -> void:

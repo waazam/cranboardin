@@ -33,6 +33,7 @@ var _points: Array[Dictionary] = []  # {pos, right, age}; front = oldest
 var _score: int = 0
 var _mult: int = 1
 var _break_timer: float = 0.0
+var _time: float = 0.0  # drives the slow hue shimmer along the ribbon
 
 
 func _ready() -> void:
@@ -43,6 +44,10 @@ func _ready() -> void:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.vertex_color_use_as_albedo = true
+	# Vertex colors are stored 0..1, so push the ribbon into HDR through the
+	# material's albedo multiplier instead -- the head burns past white and
+	# blooms while the tints stay authored in the palette below.
+	mat.albedo_color = Color(1.9, 1.9, 1.9)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -83,6 +88,7 @@ func _physics_process(delta: float) -> void:
 	if _player == null:
 		return
 
+	_time += delta
 	_break_timer = maxf(_break_timer - delta, 0.0)
 
 	# Age points out; a broken combo dissolves the stream 4x faster.
@@ -110,16 +116,28 @@ func _rebuild() -> void:
 		return
 
 	var head := _head_color()
+	# The tail's hue drifts toward the palette's opposite neon -- cyan heads
+	# warm toward pink, pink/gold/cranberry heads cool toward cyan -- so the
+	# ribbon reads as a gradient instead of one flat color. Grey (broken
+	# combo) stays grey.
+	var accent := head
+	if _break_timer <= 0.0:
+		accent = TIER_COLORS[1] if head.r < head.b else TIER_COLORS[0]
 	var width := 0.22 + 0.08 * (_mult - 1)
 	var head_alpha := 0.5 + 0.08 * _mult
 
 	_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
 	for p in _points:
-		# Taper and fade toward the tail.
+		# Taper and fade toward the tail, eased (smoothstep) so the head
+		# holds its width and the tail feathers out instead of cutting off.
 		var t: float = 1.0 - p["age"] / LIFETIME
-		var col := head
-		col.a = head_alpha * t
-		var half: float = width * t
+		var fade: float = t * t * (3.0 - 2.0 * t)
+		# Hue drift is strongest at the tail, with a slow shimmer riding
+		# down the length so the gradient feels alive rather than static.
+		var drift: float = (1.0 - t) * (0.4 + 0.12 * sin(_time * 3.0 + t * 5.0))
+		var col := head.lerp(accent, drift)
+		col.a = head_alpha * fade
+		var half: float = width * fade
 		var right: Vector3 = p["right"]
 		var pos: Vector3 = p["pos"]
 		_mesh.surface_set_color(col)

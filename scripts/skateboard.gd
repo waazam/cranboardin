@@ -52,7 +52,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _build() -> void:
+	# Painted-finish sheen on the underside/rails (the top is grip tape).
 	var deck_mat := _flat_material(deck_color)
+	deck_mat.roughness = 0.55
 	var deck := MeshInstance3D.new()
 	var deck_mesh := BoxMesh.new()
 	deck_mesh.size = Vector3(0.26, 0.05, 0.85)
@@ -83,8 +85,34 @@ func _build() -> void:
 	grip.material_override = grip_mat
 	add_child(grip)
 
-	var truck_mat := _flat_material(Color(0.6, 0.6, 0.65))
+	# Neon underglow: a thin emissive strip tucked under the deck between the
+	# trucks -- the classic LED-under-board look, in the game's signature
+	# neon pink so it matches the ramps and center line.
+	var glow := MeshInstance3D.new()
+	var glow_mesh := BoxMesh.new()
+	glow_mesh.size = Vector3(0.2, 0.015, 0.5)
+	glow.mesh = glow_mesh
+	glow.position = Vector3(0, DECK_TOP_HEIGHT - 0.058, 0)
+	# Shaded, not unshaded: Godot discards EMISSION on unshaded materials,
+	# and it's the 2.2-energy emission that pushes this past the bloom
+	# threshold so the strip actually glows.
+	var glow_mat := StandardMaterial3D.new()
+	glow_mat.albedo_color = Color(1.0, 0.29, 0.66)
+	glow_mat.emission_enabled = true
+	glow_mat.emission = Color(1.0, 0.29, 0.66)
+	glow_mat.emission_energy_multiplier = 2.2
+	glow.material_override = glow_mat
+	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(glow)
+
+	# Metal finish on the hardware so the low dusk sun glints off it as the
+	# board carves; wheels get a softer polish so they still read as urethane.
+	var truck_mat := _flat_material(Color(0.72, 0.73, 0.78))
+	truck_mat.metallic = 1.0
+	truck_mat.roughness = 0.35
 	var wheel_mat := _flat_material(wheel_color)
+	wheel_mat.metallic = 0.4
+	wheel_mat.roughness = 0.3
 	for z in [-0.27, 0.27]:
 		var truck := MeshInstance3D.new()
 		var truck_mesh := BoxMesh.new()

@@ -69,7 +69,7 @@ var _sfx_pickup: AudioStream
 
 
 func _ready() -> void:
-	# Chunkier pixels on mobile (1/5 res vs 1/3 on desktop).
+	# Chunkier pixels on mobile (1/5 res vs 1/2 on desktop).
 	if hud.is_mobile():
 		viewport_frame.stretch_shrink = 5
 
@@ -191,6 +191,7 @@ func _on_zombie_smashed() -> void:
 	_add_score(SCORE_SMASH)
 	_play_sfx(_sfx_hit, 1.5)  # pitched-up crunch, distinct from taking damage
 	camera_rig.add_shake(0.15)
+	player.burst_sparks()  # cyan spray off the wheels sells the impact
 	player.extend_boost(0.35)
 	_smash_chain += 1
 	if _smash_chain % 3 == 0:
@@ -201,6 +202,7 @@ func _on_zombie_smashed() -> void:
 func _on_boost() -> void:
 	_add_score(SCORE_BOOST)
 	_play_sfx(_sfx_pickup, 1.6)
+	player.burst_sparks()  # pads kick sparks too, matching the speed surge
 	_smash_chain = 0  # a fresh pad starts a fresh chain
 
 

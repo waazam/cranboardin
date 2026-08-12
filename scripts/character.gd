@@ -44,6 +44,11 @@ func _ready() -> void:
 	_model.scale = Vector3.ONE * model_scale
 	add_child(_model)
 
+	# The glTF ships fully rough, which goes matte-flat under the low pink
+	# sun; a one-time material pass gives the clothing a slight sheen so the
+	# dusk light actually models the rider. Colors stay untouched.
+	_tune_materials(_model)
+
 	_anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	assert(_anim != null, "AnimationLibrary GLB is missing its AnimationPlayer")
 	_anim.animation_finished.connect(_on_animation_finished)
@@ -98,6 +103,31 @@ func reset() -> void:
 	_locked = false
 	set_lean(0.0)
 	_play(&"Crouch_Idle", 0.0)
+
+
+## Duplicate each unique surface material once (surfaces that shared a
+## material keep sharing the tuned copy) and soften it: roughness pulled
+## down so the sun reads on cloth and skin, plus a faint sky-tinted rim so
+## the rider's silhouette catches the dusk from behind. Overrides live on
+## this instance only, so zombies wearing the same GLB are unaffected.
+func _tune_materials(model: Node3D) -> void:
+	var tuned := {}  # source material -> tuned copy
+	for child in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance := child as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		for surface in mesh_instance.mesh.get_surface_count():
+			var src := mesh_instance.get_active_material(surface) as BaseMaterial3D
+			if src == null:
+				continue
+			if not tuned.has(src):
+				var mat := src.duplicate() as BaseMaterial3D
+				mat.roughness = 0.55
+				mat.rim_enabled = true
+				mat.rim = 0.25
+				mat.rim_tint = 0.7
+				tuned[src] = mat
+			mesh_instance.set_surface_override_material(surface, tuned[src])
 
 
 func _play(anim: StringName, blend: float) -> void:

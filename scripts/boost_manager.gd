@@ -10,6 +10,23 @@ const PAD_S_RANGE := 1.6
 const PAD_LATERAL_RANGE := 1.4
 const PAD_MAX_HEIGHT := 0.35
 
+## One shared unshaded shader for every chevron: each chevron bakes its 0..1
+## position down the pad into its vertex COLOR.r, and a single time uniform
+## sweeps a sine wave through those phases so light appears to run downhill
+## across the ">>>" -- no per-instance materials, one uniform set per frame.
+## Wave crests push the albedo well past 1.0 so the pads bloom.
+const CHEVRON_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform float pulse_time = 0.0;
+uniform vec3 base_color : source_color = vec3(0.3, 0.95, 0.95);
+uniform vec3 hot_color : source_color = vec3(0.85, 1.0, 1.0);
+void fragment() {
+	float wave = 0.5 + 0.5 * sin(COLOR.r * TAU - pulse_time);
+	ALBEDO = mix(base_color, hot_color, wave) * (1.2 + 1.6 * wave);
+}
+"""
+
 @export var base_count: int = 7
 @export var count_per_level: int = 2
 
@@ -18,16 +35,17 @@ var _player: Node3D
 var _rng := RandomNumberGenerator.new()
 var _pads: Array[Dictionary] = []
 var _mesh: MeshInstance3D
-var _mat: StandardMaterial3D
+var _mat: ShaderMaterial
 var _time: float = 0.0
 
 
 func _ready() -> void:
-	# Unshaded so the chevrons glow through the dusk, like the lane dashes.
-	_mat = StandardMaterial3D.new()
-	_mat.albedo_color = Color(0.3, 0.95, 0.95)
-	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Unshaded so the chevrons glow through the dusk, like the lane dashes;
+	# the sweep animation lives in CHEVRON_SHADER above.
+	var shader := Shader.new()
+	shader.code = CHEVRON_SHADER
+	_mat = ShaderMaterial.new()
+	_mat.shader = shader
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -59,9 +77,11 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	add_child(_mesh)
 
 
-## Three ">>>" chevrons pointing downhill.
+## Three ">>>" chevrons pointing downhill. COLOR.r carries each chevron's
+## phase down the pad (0, 1/3, 2/3) for the shader's traveling wave.
 func _add_chevrons(st: SurfaceTool, s: float, lat: float) -> void:
 	for k in 3:
+		st.set_color(Color(k / 3.0, 0.0, 0.0))
 		var s0 := s - 1.6 + k * 1.1
 		for side in [-1.0, 1.0]:
 			_add_quad(st,
@@ -85,9 +105,11 @@ func _physics_process(delta: float) -> void:
 	if _track == null or _player == null:
 		return
 	_time += delta
-	# Slow cyan pulse so pads read as interactive.
-	_mat.albedo_color = Color(0.3, 0.95, 0.95).lerp(Color(0.75, 1.0, 1.0),
-			0.5 + 0.5 * sin(_time * 4.0))
+	# Slow sweep so pads read as interactive: one uniform update drives the
+	# wave across every chevron of every pad. Wrapped to the wave's period so
+	# the 32-bit uniform never grows large enough to cost sin() precision on
+	# a long session.
+	_mat.set_shader_parameter("pulse_time", fmod(_time * 3.0, TAU))
 
 	if _player.run_state != _player.RunState.RUNNING:
 		return

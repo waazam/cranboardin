@@ -19,14 +19,36 @@ var _rng := RandomNumberGenerator.new()
 var _ramps: Array[Dictionary] = []
 var _container: Node3D
 var _mat: StandardMaterial3D
+var _edge_mat: StandardMaterial3D
+var _lip_mesh: BoxMesh
+var _rail_mesh: BoxMesh
 
 
 func _ready() -> void:
-	# Unshaded neon pink, same family as the center-line dashes.
+	# Neon pink deck, same family as the center-line dashes -- but shaded
+	# now, with a metallic sheen so the low dusk sun glints off the kicker
+	# face, and self-lit through emission so it never goes muddy in shadow.
 	_mat = StandardMaterial3D.new()
 	_mat.albedo_color = Color(1.0, 0.35, 0.65)
-	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_mat.metallic = 0.6
+	_mat.roughness = 0.35
+	_mat.emission_enabled = true
+	_mat.emission = Color(1.0, 0.35, 0.65)
+	_mat.emission_energy_multiplier = 0.55
 	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	# Edge strips: unshaded HDR white-pink, so every ramp's outline burns
+	# bright enough to bloom and reads clearly at speed. One material and
+	# two BoxMeshes shared by every strip on every ramp.
+	_edge_mat = StandardMaterial3D.new()
+	_edge_mat.albedo_color = Color(2.0, 1.1, 1.6)
+	_edge_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_lip_mesh = BoxMesh.new()
+	_lip_mesh.size = Vector3(2.8, 0.16, 0.08)
+	_rail_mesh = BoxMesh.new()
+	# A hair longer than the 3.0 deck so the rail's end caps sit proud of the
+	# deck's front/back faces instead of coplanar with them (which z-fights).
+	_rail_mesh.size = Vector3(0.08, 0.16, 3.04)
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -66,6 +88,23 @@ func _make_wedge(s: float, lat: float) -> void:
 			xf.basis * Basis(Vector3(1, 0, 0), 0.16),
 			xf.origin + xf.basis.y * 0.28)
 	_container.add_child(wedge)
+
+	# Thin emissive strips along the lip (the raised downhill edge at -Z)
+	# and both side edges, parented to the wedge so they inherit its tilt.
+	# Slightly taller than the deck (0.16 vs 0.12), and every strip sits a
+	# touch proud of the deck's own faces -- coplanar faces between the two
+	# materials would z-fight and shimmer at pixel res.
+	var lip := MeshInstance3D.new()
+	lip.mesh = _lip_mesh
+	lip.material_override = _edge_mat
+	lip.position = Vector3(0.0, 0.0, -1.48)  # front face 0.02 past the deck's
+	wedge.add_child(lip)
+	for side in [-1.0, 1.0]:
+		var rail := MeshInstance3D.new()
+		rail.mesh = _rail_mesh
+		rail.material_override = _edge_mat
+		rail.position = Vector3(side * 1.38, 0.0, 0.0)  # outer face 0.02 proud
+		wedge.add_child(rail)
 
 
 func _physics_process(_delta: float) -> void:

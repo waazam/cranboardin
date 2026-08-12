@@ -1,8 +1,8 @@
 extends Node3D
 ## Pixel-art city backdrop: two parallax layers of procedurally drawn
 ## skyline strips (Image -> ImageTexture with NEAREST filtering, so the
-## chunky pixels stay crisp), blocky pixel clouds, and animated birds,
-## against a procedural gradient sky.
+## chunky pixels stay crisp), blocky pixel clouds, animated birds, and a
+## sparse starfield, against a procedural gradient sky.
 ##
 ## Everything sits under `_follow_root`, which tracks the player's X/Z
 ## exactly and the player's Y through a slow smoothing filter -- so the
@@ -40,6 +40,7 @@ func _ready() -> void:
 	add_child(_follow_root)
 
 	_build_skyline()
+	_build_stars()
 	_build_clouds()
 	_spawn_birds()
 
@@ -74,9 +75,15 @@ func _setup_environment() -> void:
 	var sky_material := ProceduralSkyMaterial.new()
 	sky_material.sky_top_color = sky_top_color
 	sky_material.sky_horizon_color = sky_horizon_color
-	# Below the horizon: dark plum, so the world isn't floating on glow.
+	# A slightly lazier sky curve lets the warm horizon band climb a little
+	# higher before the plum zenith takes over -- a richer sunset gradient
+	# than the default tight strip.
+	sky_material.sky_curve = 0.09
+	# Below the horizon: dark plum, so the world isn't floating on glow; the
+	# horizon edge itself glows a warm ember so the band reads hot right at
+	# the skyline.
 	sky_material.ground_bottom_color = Color(0.14, 0.09, 0.2)
-	sky_material.ground_horizon_color = Color(0.42, 0.2, 0.34)
+	sky_material.ground_horizon_color = Color(0.58, 0.26, 0.32)
 
 	var sky := Sky.new()
 	sky.sky_material = sky_material
@@ -86,7 +93,37 @@ func _setup_environment() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 1.25
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# ACES with a raised white point: keeps the neon punchy without the
+	# highlights clipping to flat white the way Filmic did.
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_white = 1.2
+
+	# HDR glow so every emissive surface (neon windows, boost pads, trail,
+	# score popups) actually blooms. SOFTLIGHT keeps it a halo rather than a
+	# white-out; the threshold sits just under 1.0 so only genuinely hot
+	# pixels contribute.
+	env.glow_enabled = true
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	env.glow_hdr_threshold = 0.9
+	env.glow_intensity = 0.55
+	env.glow_strength = 1.0
+	env.glow_bloom = 0.05
+	# Mid-size blur levels only: tight halos around neon, no screen-wide fog.
+	env.set_glow_level(0, 0.0)
+	env.set_glow_level(1, 0.4)
+	env.set_glow_level(2, 0.8)
+	env.set_glow_level(3, 0.6)
+	env.set_glow_level(4, 0.2)
+	env.set_glow_level(5, 0.0)
+	env.set_glow_level(6, 0.0)
+
+	# Gentle SSAO grounds the props against the road -- cheap in Forward+.
+	# Low radius/intensity so contact shadows appear without dirtying the
+	# clean flat-shaded look.
+	env.ssao_enabled = true
+	env.ssao_radius = 1.0
+	env.ssao_intensity = 1.2
+	env.ssao_detail = 0.3
 
 	# Depth fog glues road, scenery, and skyline into one atmosphere;
 	# tinted pink-purple for the neon dusk.
@@ -96,24 +133,45 @@ func _setup_environment() -> void:
 	env.fog_sky_affect = 0.1
 	env.fog_aerial_perspective = 0.5
 
-	# Push saturation for the lurid retro look.
+	# Push saturation + a whisper of contrast for the lurid retro look
+	# (ACES flattens a touch versus Filmic, so the grade compensates).
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.12
+	env.adjustment_saturation = 1.15
+	env.adjustment_contrast = 1.04
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
 
-	# Low pink dusk sun.
+	# Low dusk sun -- warmed toward amber and pushed a bit harder so lit
+	# faces clearly separate from shadowed ones.
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.rotation_degrees = Vector3(-38, -30, 0)
-	sun.light_color = Color(1.0, 0.62, 0.68)
-	sun.light_energy = 0.7
+	sun.light_color = Color(1.0, 0.64, 0.52)
+	sun.light_energy = 0.9
 	sun.shadow_enabled = true
 	sun.shadow_blur = 1.8
-	sun.shadow_opacity = 0.65
+	sun.shadow_opacity = 0.7
+	# Two splits are plenty at this draw distance and cheaper than the
+	# default four; shadows fade out well before the fog swallows things.
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 130.0
 	add_child(sun)
+
+	# Very dim cool-blue fill from the opposite side, no shadows: lifts the
+	# pitch-black faces away from the sun into a soft night-sky blue instead.
+	# Kept faint enough that its disc in the procedural sky reads as nothing
+	# more than a ghost of moonrise. Specular off so it can't add a second
+	# highlight.
+	var fill := DirectionalLight3D.new()
+	fill.name = "SkyFill"
+	fill.rotation_degrees = Vector3(-48, 150, 0)
+	fill.light_color = Color(0.45, 0.58, 1.0)
+	fill.light_energy = 0.15
+	fill.light_specular = 0.0
+	fill.shadow_enabled = false
+	add_child(fill)
 
 
 # --- Skyline ---------------------------------------------------------------
@@ -208,6 +266,87 @@ func _make_skyline_texture(silhouette: Color, windows: Color,
 		x += bw + _rng.randi_range(-3, 2)
 
 	return ImageTexture.create_from_image(img)
+
+
+# --- Stars -----------------------------------------------------------------
+
+## Sparse starfield on a dome high above the horizon: one MultiMesh of tiny
+## unshaded quads (a single draw call), each a couple of device pixels after
+## the viewport's pixel shrink. Stars fade in with elevation so none pop out of
+## the warm horizon band, and the dome rides `_follow_root` like the skyline
+## so it never parallaxes against the sky gradient.
+const STAR_COUNT := 140
+## Dome radius: beyond the farthest skyline strip (~360m) but inside the
+## camera's 600m far plane.
+const STAR_DOME_RADIUS := 430.0
+
+func _build_stars() -> void:
+	var mesh := QuadMesh.new()
+	mesh.size = Vector2(2.0, 2.0)
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true  # per-star tint/alpha from instance color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Way past the fog falloff; fog would just gray them out.
+	mat.disable_fog = true
+	# Transparent objects sort by their instance origin, and this MultiMesh's
+	# origin is `_follow_root` -- the player's own position -- so despite being
+	# the farthest thing in the scene it would sort as the *nearest* and draw
+	# over the clouds, neon trail, and popups. Force it to the very back of
+	# the transparent pass instead.
+	mat.render_priority = -1
+	mesh.material = mat
+
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = mesh
+	mm.instance_count = STAR_COUNT
+
+	# Faint dusk-star tints: mostly warm white, a scattering of cyan and
+	# pink to echo the neon palette.
+	var tints: Array[Color] = [
+		Color(1.0, 0.96, 0.9),
+		Color(1.0, 0.96, 0.9),
+		Color(0.75, 0.95, 1.0),
+		Color(1.0, 0.8, 0.92),
+	]
+
+	for i in STAR_COUNT:
+		# Random dome position, biased low: elevation squared toward the
+		# horizon would clump stars in the fade band, so sample linearly
+		# between "just above the warm band" and "not quite overhead".
+		var azimuth: float = _rng.randf_range(0.0, TAU)
+		var elevation: float = _rng.randf_range(deg_to_rad(9.0), deg_to_rad(72.0))
+		var dir := Vector3(
+			cos(elevation) * sin(azimuth),
+			sin(elevation),
+			cos(elevation) * cos(azimuth)
+		)
+		var pos := dir * STAR_DOME_RADIUS
+
+		# Face the quad back toward the dome center (the player): -Z looks
+		# outward along `dir`, leaving the quad's +Z normal pointing inward.
+		var t := Transform3D.IDENTITY.looking_at(dir, Vector3.UP)
+		t.origin = pos
+		mm.set_instance_transform(i, t)
+
+		# Fade in across ~9..24 degrees of elevation, so stars emerge out of
+		# the sunset glow instead of sitting on top of it; brightness also
+		# varies per star so the field doesn't read as a uniform stipple.
+		var horizon_fade: float = smoothstep(deg_to_rad(9.0), deg_to_rad(24.0), elevation)
+		var brightness: float = _rng.randf_range(0.35, 1.0)
+		var col: Color = tints[_rng.randi_range(0, tints.size() - 1)]
+		col.a = horizon_fade * brightness * 0.85
+		mm.set_instance_color(i, col)
+
+	var stars := MultiMeshInstance3D.new()
+	stars.name = "Stars"
+	stars.multimesh = mm
+	stars.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_follow_root.add_child(stars)
 
 
 # --- Clouds ----------------------------------------------------------------

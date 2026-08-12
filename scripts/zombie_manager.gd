@@ -37,19 +37,71 @@ var _next_spawn: int = 0
 var _active: Array[Dictionary] = []
 ## Zombies mid-launch after a boost smash: {node, vel, spin, t}.
 var _smashed: Array[Dictionary] = []
-var _zombie_material: StandardMaterial3D
-var _runner_material: StandardMaterial3D
+## Small shared palettes rather than per-instance materials: however big the
+## horde gets, the renderer only ever sees a handful of material states.
+var _zombie_materials: Array[StandardMaterial3D] = []
+var _runner_materials: Array[StandardMaterial3D] = []
+## Eye dots: one tiny shared mesh + one shared material per zombie class.
+var _eye_mesh: SphereMesh
+var _eye_material: StandardMaterial3D
+var _runner_eye_material: StandardMaterial3D
 
 
 func _ready() -> void:
-	_zombie_material = StandardMaterial3D.new()
-	_zombie_material.albedo_color = Color(0.45, 0.56, 0.36)
-	_zombie_material.roughness = 1.0
+	# Shamblers: sickly greens with a bruised purple thrown in, so the horde
+	# has per-zombie variety while every tint stays a shared material.
+	for tint: Color in [
+		Color(0.45, 0.56, 0.36),  # classic sickly green
+		Color(0.36, 0.5, 0.42),   # colder, mossier green
+		Color(0.44, 0.36, 0.5),   # bruised purple
+	]:
+		_zombie_materials.append(_corpse_material(tint))
 
-	# Runners: rusty red so they read as danger at a distance.
-	_runner_material = StandardMaterial3D.new()
-	_runner_material.albedo_color = Color(0.62, 0.28, 0.2)
-	_runner_material.roughness = 1.0
+	# Runners: rusty reds so they read as danger at a distance.
+	for tint: Color in [
+		Color(0.62, 0.28, 0.2),   # rust
+		Color(0.54, 0.2, 0.28),   # dried-blood maroon
+	]:
+		_runner_materials.append(_corpse_material(tint))
+
+	# Eyes: a low-poly pinhead sphere, unshaded and hot so it blooms.
+	# Shamblers get a sickly ghoul-green stare; runners burn hot orange.
+	_eye_mesh = SphereMesh.new()
+	_eye_mesh.radius = 0.028
+	_eye_mesh.height = 0.056
+	_eye_mesh.radial_segments = 6
+	_eye_mesh.rings = 3
+	_eye_material = _eye_glow(Color(0.65, 1.0, 0.4))
+	_runner_eye_material = _eye_glow(Color(1.0, 0.4, 0.14))
+
+
+## Dead-flesh material with a dusk backlight baked in: a touch of rim so the
+## silhouette catches the pink sky from behind, slightly-below-full roughness
+## so the sun still models the body, and a whisper of self-emission so the
+## horde never goes pitch black between the street lamps.
+func _corpse_material(tint: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = tint
+	mat.roughness = 0.9
+	mat.rim_enabled = true
+	mat.rim = 0.4
+	mat.rim_tint = 0.5
+	mat.emission_enabled = true
+	mat.emission = tint
+	mat.emission_energy_multiplier = 0.12
+	return mat
+
+
+## Hot emissive dot for the eyes. Deliberately shaded, not unshaded --
+## Godot discards EMISSION on unshaded materials, and it's the 3.0-energy
+## emission that makes the dots burn bright enough to catch the glow pass.
+func _eye_glow(color: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 3.0
+	return mat
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -203,11 +255,27 @@ func _activate(spawn: Dictionary) -> void:
 	model.scale = Vector3.ONE * 0.95
 	node.add_child(model)
 
-	# Sickly green tint over every mesh in the rig; rusty red for runners.
+	# Tint every mesh in the rig from the shared palette: sickly greens and
+	# purples for shamblers, rusty reds for runners.
 	var is_runner: bool = spawn.get("runner", false)
-	var mat := _runner_material if is_runner else _zombie_material
+	var palette := _runner_materials if is_runner else _zombie_materials
+	var mat: StandardMaterial3D = palette[_rng.randi_range(0, palette.size() - 1)]
 	for mesh_instance in model.find_children("*", "MeshInstance3D", true, false):
 		(mesh_instance as MeshInstance3D).material_override = mat
+
+	# Glowing eye dots at face height. Pinned to the body rather than the
+	# head bone -- at pixel scale the walk bob is too small to give the trick
+	# away, and it keeps the cost to two tiny shared-mesh instances. The
+	# model faces +Z and the zombie yaws toward the player, so the dots
+	# always stare down the road at you.
+	var eye_mat := _runner_eye_material if is_runner else _eye_material
+	for x in [-0.05, 0.05]:
+		var eye := MeshInstance3D.new()
+		eye.mesh = _eye_mesh
+		eye.material_override = eye_mat
+		eye.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		eye.position = Vector3(x, 1.58, 0.09)
+		model.add_child(eye)
 
 	var anim := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if anim:

@@ -75,6 +75,12 @@ var visuals: Node3D
 var skateboard: Skateboard
 var character: Character
 
+## Wheel dust (continuous, thickens with speed) and impact sparks
+## (one-shot burst fired by Main on smashes and boost pads). Both are
+## additive unshaded quads in the neon palette -- cheap at low res.
+var _dust: GPUParticles3D
+var _sparks: GPUParticles3D
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -90,6 +96,93 @@ func _ready() -> void:
 	character.name = "Character"
 	character.stand_height = Skateboard.DECK_TOP_HEIGHT
 	visuals.add_child(character)
+
+	_build_particles()
+
+
+## Builds the two wheel emitters. World-space particles (local_coords off)
+## so puffs/sparks stay planted on the road and streak behind the board.
+## Counts stay tiny -- the whole scene renders at half res anyway.
+func _build_particles() -> void:
+	# One shared additive material; each emitter tints via process-material
+	# color (vertex color), so no per-emitter material copies.
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.vertex_color_use_as_albedo = true
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+
+	# Shared fade: full brightness at birth, gone by end of life. Additive
+	# blend scales by alpha, so this reads as a clean burn-out.
+	var fade := Gradient.new()
+	fade.set_color(0, Color(1, 1, 1, 0.9))
+	fade.set_color(1, Color(1, 1, 1, 0.0))
+	var fade_tex := GradientTexture1D.new()
+	fade_tex.gradient = fade
+
+	# Dust: low plume kicked up and back off the rear wheels, board-glow
+	# pink so it reads as neon spray rather than dirt.
+	_dust = GPUParticles3D.new()
+	_dust.name = "WheelDust"
+	_dust.amount = 20
+	_dust.lifetime = 0.5
+	_dust.local_coords = false
+	_dust.amount_ratio = 0.0  # driven by speed each tick
+	_dust.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_dust.position = Vector3(0.0, 0.06, 0.45)  # just behind the rear truck
+	var dust_pm := ParticleProcessMaterial.new()
+	dust_pm.direction = Vector3(0.0, 0.55, 1.0)  # up and backwards
+	dust_pm.spread = 24.0
+	dust_pm.initial_velocity_min = 1.2
+	dust_pm.initial_velocity_max = 2.6
+	dust_pm.gravity = Vector3(0.0, -3.0, 0.0)
+	dust_pm.scale_min = 0.5
+	dust_pm.scale_max = 1.0
+	dust_pm.color = Color(1.0, 0.29, 0.66)  # matches the deck underglow
+	dust_pm.color_ramp = fade_tex
+	_dust.process_material = dust_pm
+	var dust_mesh := QuadMesh.new()
+	dust_mesh.size = Vector2(0.13, 0.13)
+	dust_mesh.material = mat
+	_dust.draw_pass_1 = dust_mesh
+	add_child(_dust)
+
+	# Sparks: a single hard one-shot spray, cyan-white for contrast with
+	# the pink dust. Main restarts it on smashes and boost pads.
+	_sparks = GPUParticles3D.new()
+	_sparks.name = "Sparks"
+	_sparks.amount = 14
+	_sparks.lifetime = 0.35
+	_sparks.one_shot = true
+	_sparks.explosiveness = 1.0
+	_sparks.emitting = false
+	_sparks.local_coords = false
+	_sparks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sparks.position = Vector3(0.0, 0.15, 0.0)
+	var spark_pm := ParticleProcessMaterial.new()
+	spark_pm.direction = Vector3(0.0, 1.0, 0.35)
+	spark_pm.spread = 55.0
+	spark_pm.initial_velocity_min = 4.0
+	spark_pm.initial_velocity_max = 7.0
+	spark_pm.gravity = Vector3(0.0, -14.0, 0.0)
+	spark_pm.scale_min = 0.4
+	spark_pm.scale_max = 0.8
+	spark_pm.color = Color(0.55, 1.0, 1.0)  # trail-tier cyan, pushed hot
+	spark_pm.color_ramp = fade_tex
+	_sparks.process_material = spark_pm
+	var spark_mesh := QuadMesh.new()
+	spark_mesh.size = Vector2(0.09, 0.09)
+	spark_mesh.material = mat
+	_sparks.draw_pass_1 = spark_mesh
+	add_child(_sparks)
+
+
+## Fired by Main on zombie smashes and boost pads: one cyan spray off the
+## wheels. restart() re-triggers the one-shot even mid-burst.
+func burst_sparks() -> void:
+	if run_state != RunState.RUNNING:
+		return
+	_sparks.restart()
 
 
 func setup(track: Node3D) -> void:
@@ -120,6 +213,9 @@ func reset_run() -> void:
 	_active_trick = ""
 	_boost_timer = 0.0
 	character.reset()
+	_dust.restart()  # clear puffs left hanging at the previous crash site
+	_dust.amount_ratio = 0.0
+	_sparks.emitting = false
 	_apply_transform()
 
 
@@ -152,6 +248,8 @@ func _physics_process(delta: float) -> void:
 		return
 	if run_state != RunState.RUNNING:
 		# Dead: frozen. Finished: glide to a stop past the line.
+		# Dust tapers with the glide and cuts out entirely on a death.
+		_dust.amount_ratio = get_speed_ratio() if run_state == RunState.FINISHED else 0.0
 		if run_state == RunState.FINISHED and current_speed > 0.1:
 			current_speed = move_toward(current_speed, 0.0, 9.0 * delta)
 			s = minf(s + current_speed * delta, _track.arc_length)
@@ -190,6 +288,8 @@ func _physics_process(delta: float) -> void:
 			-_track.road_width * 0.5 + 0.7, _track.road_width * 0.5 - 0.7)
 
 	_apply_transform()
+	# Wheels only kick up dust on the road; the plume thickens with speed.
+	_dust.amount_ratio = get_speed_ratio() if height <= 0.001 else 0.0
 	_update_lean(steer_input, delta)
 	_update_trick(delta, height <= 0.001)
 	skateboard.update_roll(current_speed, delta)

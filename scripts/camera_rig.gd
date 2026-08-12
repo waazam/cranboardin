@@ -56,6 +56,11 @@ func snap_to_target() -> void:
 		return
 	global_position = _desired_position()
 	look_at(_look_target(), Vector3.UP)
+	# Fresh level, fresh camera: no leftover speed-stretch or jitter from
+	# the previous run.
+	camera.fov = base_fov
+	camera.position = Vector3.ZERO
+	_shake = 0.0
 
 
 func _forward() -> Vector3:

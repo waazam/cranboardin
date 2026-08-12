@@ -1,8 +1,8 @@
 extends Node3D
 ## Cranberry bottle power-ups scattered along the road. Grabbing one
 ## restores health -- or overheals past max (up to Player.overheal_cap)
-## if you're already topped up. Bottles bob and spin so they read as
-## pickups against the muted world.
+## if you're already topped up. Bottles bob, spin, and pulse (glow and a
+## gentle swell) so they read as pickups against the muted world.
 
 const PICKUP_S_RANGE := 1.1
 const PICKUP_LATERAL_RANGE := 1.0
@@ -18,7 +18,48 @@ var _rng := RandomNumberGenerator.new()
 var _bottles: Array[Dictionary] = []
 var _bottle_time: float = 0.0
 
+## Shared bottle resources: every bottle on the road uses the same two
+## materials and three meshes, and the pulse in _physics_process animates
+## one material property to drive the glow on all of them at once.
+var _juice_mat: StandardMaterial3D
+var _cap_mat: StandardMaterial3D
+var _body_mesh: CylinderMesh
+var _neck_mesh: CylinderMesh
+var _cap_mesh: CylinderMesh
+
 signal collected(health: int)
+
+
+func _ready() -> void:
+	# Juice: crimson with a strong emissive core so the bottle blooms and
+	# reads at speed against the muted road.
+	_juice_mat = StandardMaterial3D.new()
+	_juice_mat.albedo_color = Color(0.62, 0.12, 0.22)
+	_juice_mat.roughness = 0.25
+	_juice_mat.emission_enabled = true
+	_juice_mat.emission = Color(0.9, 0.12, 0.28)
+	_juice_mat.emission_energy_multiplier = 1.6
+
+	# Cap: polished gold, catching the dusk sun.
+	_cap_mat = StandardMaterial3D.new()
+	_cap_mat.albedo_color = Color(0.78, 0.65, 0.35)
+	_cap_mat.metallic = 0.9
+	_cap_mat.roughness = 0.25
+
+	_body_mesh = CylinderMesh.new()
+	_body_mesh.top_radius = 0.14
+	_body_mesh.bottom_radius = 0.16
+	_body_mesh.height = 0.42
+
+	_neck_mesh = CylinderMesh.new()
+	_neck_mesh.top_radius = 0.055
+	_neck_mesh.bottom_radius = 0.1
+	_neck_mesh.height = 0.14
+
+	_cap_mesh = CylinderMesh.new()
+	_cap_mesh.top_radius = 0.06
+	_cap_mesh.bottom_radius = 0.06
+	_cap_mesh.height = 0.06
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -47,6 +88,10 @@ func _physics_process(delta: float) -> void:
 		return
 	_bottle_time += delta
 
+	# Heartbeat pulse on the shared juice material: one property write per
+	# tick drives the glow of every bottle on the road.
+	_juice_mat.emission_energy_multiplier = 1.6 + sin(_bottle_time * 3.2) * 0.7
+
 	var i := _bottles.size() - 1
 	while i >= 0:
 		var b := _bottles[i]
@@ -58,6 +103,9 @@ func _physics_process(delta: float) -> void:
 		var bob: float = 0.15 + sin(_bottle_time * 2.4 + b["phase"]) * 0.1
 		node.position = xf.origin + xf.basis.y * bob
 		node.rotation.y = _bottle_time * 1.8 + b["phase"]
+		# Gentle swell on top of the bob (phase-offset per bottle, in step
+		# with the glow pulse) so pickups breathe rather than sit static.
+		node.scale = Vector3.ONE * (1.0 + sin(_bottle_time * 3.2 + b["phase"]) * 0.06)
 
 		if _player.run_state == _player.RunState.RUNNING \
 				and absf(bs - _player.s) < PICKUP_S_RANGE \
@@ -74,47 +122,26 @@ func _physics_process(delta: float) -> void:
 
 
 ## A little cranberry-juice bottle: crimson body, short neck, gold cap.
+## Built entirely from the shared meshes/materials created in _ready().
 func _make_bottle() -> Node3D:
 	var item := Node3D.new()
 
-	var juice_mat := StandardMaterial3D.new()
-	juice_mat.albedo_color = Color(0.62, 0.12, 0.22)
-	juice_mat.roughness = 0.3
-	juice_mat.emission_enabled = true
-	juice_mat.emission = Color(0.55, 0.08, 0.18)
-	juice_mat.emission_energy_multiplier = 0.6
-
 	var body := MeshInstance3D.new()
-	var body_mesh := CylinderMesh.new()
-	body_mesh.top_radius = 0.14
-	body_mesh.bottom_radius = 0.16
-	body_mesh.height = 0.42
-	body.mesh = body_mesh
+	body.mesh = _body_mesh
 	body.position = Vector3(0, 0.21, 0)
-	body.material_override = juice_mat
+	body.material_override = _juice_mat
 	item.add_child(body)
 
 	var neck := MeshInstance3D.new()
-	var neck_mesh := CylinderMesh.new()
-	neck_mesh.top_radius = 0.055
-	neck_mesh.bottom_radius = 0.1
-	neck_mesh.height = 0.14
-	neck.mesh = neck_mesh
+	neck.mesh = _neck_mesh
 	neck.position = Vector3(0, 0.49, 0)
-	neck.material_override = juice_mat
+	neck.material_override = _juice_mat
 	item.add_child(neck)
 
 	var cap := MeshInstance3D.new()
-	var cap_mesh := CylinderMesh.new()
-	cap_mesh.top_radius = 0.06
-	cap_mesh.bottom_radius = 0.06
-	cap_mesh.height = 0.06
-	cap.mesh = cap_mesh
+	cap.mesh = _cap_mesh
 	cap.position = Vector3(0, 0.59, 0)
-	var cap_mat := StandardMaterial3D.new()
-	cap_mat.albedo_color = Color(0.78, 0.65, 0.35)
-	cap_mat.roughness = 0.4
-	cap.material_override = cap_mat
+	cap.material_override = _cap_mat
 	item.add_child(cap)
 
 	return item

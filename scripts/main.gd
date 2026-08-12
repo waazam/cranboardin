@@ -78,11 +78,12 @@ var _entry_fade: ColorRect
 
 
 func _ready() -> void:
-	# Much chunkier pixels on mobile (1/7 res vs 1/3 on desktop) -- phone
-	# screens are dense enough that heavy shrink still reads, and it keeps
-	# the GPU cost tiny.
-	if hud.is_mobile():
-		viewport_frame.stretch_shrink = 7
+	# Pixelation targets a fixed internal resolution instead of a fixed
+	# divisor, so desktops, browser windows, and phones of any size and
+	# density all land on the same chunky-but-readable pixel grid. Re-run
+	# on resize so browser window changes and phone rotation stay correct.
+	_update_pixelation()
+	get_viewport().size_changed.connect(_update_pixelation)
 
 	_setup_audio()
 
@@ -111,6 +112,14 @@ func _ready() -> void:
 	# Entering from the menu's dip-to-black: fade the world in.
 	var tween := create_tween()
 	tween.tween_property(_entry_fade, "color:a", 0.0, 0.6)
+
+
+## ~340 visible pixel rows on desktop, ~200 on mobile (chunkier, and far
+## fewer fragments for phone GPUs).
+func _update_pixelation() -> void:
+	var rows := 200.0 if hud.is_mobile() else 340.0
+	viewport_frame.stretch_shrink = clampi(
+			roundi(get_viewport().get_visible_rect().size.y / rows), 2, 9)
 
 
 ## The center READY/GO card plus the entry fade, on their own layer above

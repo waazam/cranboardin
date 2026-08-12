@@ -1,9 +1,11 @@
 extends Node3D
-## Spawns and drives the zombie horde. A spawn plan is laid out along the
-## track at level start; zombies only get instantiated once the player is
-## within activation range, and are freed once passed. Each zombie is a
-## single pixel-art billboard sprite (see pixel_sprites.gd) -- one quad per
-## zombie, so the horde stays cheap even on the web build.
+## Spawns and drives the horde: shambling aliens and sprinting cyborgs.
+## (Internally everything still says "zombie" -- the AI is unchanged, only
+## the species swapped.) A spawn plan is laid out along the track at level
+## start; enemies only get instantiated once the player is within
+## activation range, and are freed once passed. Each one is a single
+## pixel-art billboard sprite (see pixel_sprites.gd) -- one quad per enemy,
+## so the horde stays cheap even on the web build.
 ##
 ## Zombies live in the same spline space as the player (s, lateral) and
 ## hunt the player's lane -- dodging them is the core game, and they can
@@ -86,10 +88,10 @@ var _popups: Array[Dictionary] = []
 const POPUP_LIFETIME := 0.8
 ## Small shared SpriteFrames pools rather than per-instance art: however big
 ## the horde gets, only a handful of tiny textures ever exist. Everything
-## stays inside the game's strict cyan/pink/teal/purple palette: shamblers
-## in the cool half (cyan/teal/purple) with hot pink eyes, runners in the
-## hot half (magenta/pink) with cyan eyes so danger still reads at a
-## distance.
+## stays inside the game's strict cyan/pink/teal/purple palette: shambling
+## ALIENS in the cool half (cyan/teal/purple) with hot pink eyes, sprinting
+## CYBORGS in the hot half (magenta/pink) with cyan visors so danger still
+## reads at a distance.
 var _shambler_frames: Array[SpriteFrames] = []
 var _runner_frames: Array[SpriteFrames] = []
 
@@ -101,13 +103,13 @@ func _ready() -> void:
 		Color(0.7, 0.35, 1.0),    # electric purple
 		Color(0.6, 0.55, 0.95),   # dusk lavender
 	]:
-		_shambler_frames.append(PixelSprites.zombie_frames(tint, Color(1.0, 0.3, 0.65)))
+		_shambler_frames.append(PixelSprites.alien_frames(tint, Color(1.0, 0.3, 0.65)))
 
 	for tint: Color in [
 		Color(0.95, 0.3, 0.85),   # hot magenta
 		Color(1.0, 0.25, 0.55),   # hot pink
 	]:
-		_runner_frames.append(PixelSprites.zombie_frames(tint, Color(0.55, 1.0, 1.0)))
+		_runner_frames.append(PixelSprites.cyborg_frames(tint, Color(0.55, 1.0, 1.0)))
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -355,8 +357,8 @@ func _activate(spawn: Dictionary) -> void:
 	var node := Node3D.new()
 	add_child(node)
 
-	# One billboard sprite from the shared tinted pools: sickly greens and
-	# purples for shamblers, rusty reds for runners. Eyes are baked hot
+	# One billboard sprite from the shared tinted pools: cool-tinted aliens
+	# for shamblers, hot cyborgs for runners. Eyes and visors are baked hot
 	# pixels, so the stare comes free with the sprite.
 	var is_runner: bool = spawn.get("runner", false)
 	var pool := _runner_frames if is_runner else _shambler_frames

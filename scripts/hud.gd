@@ -136,7 +136,7 @@ func _build_ui() -> void:
 
 	var hint_text := "WASD STEER / ACCELERATE / BRAKE   -   SPACE JUMP   -   R RESTART"
 	if is_mobile() or force_touch_controls:
-		hint_text = "USE THE ARROWS   -   JUMP OVER ZOMBIES"
+		hint_text = "USE THE ARROWS   -   JUMP THE HORDE"
 	hint_label = _make_label(hint_text, 16, Color(1, 1, 1, 0.85))
 	hint_label.position = Vector2(viewport_size.x * 0.5 - 300, viewport_size.y - 40)
 	add_child(hint_label)

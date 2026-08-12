@@ -25,8 +25,10 @@ var _fade_layer: CanvasLayer
 
 
 func _ready() -> void:
-	if _is_mobile():
-		viewport_frame.stretch_shrink = 7
+	# Same adaptive pixelation as the game: target a fixed internal
+	# resolution (a bit chunkier than gameplay) whatever the screen.
+	_update_pixelation()
+	get_viewport().size_changed.connect(_update_pixelation)
 
 	# A still postcard: freeze the backdrop (stops the circling birds)
 	# once it has built itself.
@@ -46,6 +48,13 @@ func _ready() -> void:
 static func _is_mobile() -> bool:
 	return OS.has_feature("web_android") or OS.has_feature("web_ios") \
 			or OS.has_feature("android") or OS.has_feature("ios")
+
+
+## ~216 visible pixel rows on desktop, ~170 on mobile.
+func _update_pixelation() -> void:
+	var rows := 170.0 if _is_mobile() else 216.0
+	viewport_frame.stretch_shrink = clampi(
+			roundi(get_viewport().get_visible_rect().size.y / rows), 2, 10)
 
 
 func _process(delta: float) -> void:

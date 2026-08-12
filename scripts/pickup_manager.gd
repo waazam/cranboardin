@@ -1,8 +1,8 @@
 extends Node3D
 ## Cranberry bottle power-ups scattered along the road. Grabbing one
-## restores health -- or overheals past max (up to Player.overheal_cap)
-## if you're already topped up. Bottles bob, spin, and pulse (glow and a
-## gentle swell) so they read as pickups against the muted world.
+## restores a hit. Each bottle is a pixel-art billboard sprite (see
+## pixel_sprites.gd) with a two-frame sparkle, bobbing and swelling so it
+## reads as a pickup against the muted world.
 
 const PICKUP_S_RANGE := 1.1
 const PICKUP_LATERAL_RANGE := 1.0
@@ -18,48 +18,14 @@ var _rng := RandomNumberGenerator.new()
 var _bottles: Array[Dictionary] = []
 var _bottle_time: float = 0.0
 
-## Shared bottle resources: every bottle on the road uses the same two
-## materials and three meshes, and the pulse in _physics_process animates
-## one material property to drive the glow on all of them at once.
-var _juice_mat: StandardMaterial3D
-var _cap_mat: StandardMaterial3D
-var _body_mesh: CylinderMesh
-var _neck_mesh: CylinderMesh
-var _cap_mesh: CylinderMesh
+## One SpriteFrames shared by every bottle on the road.
+var _bottle_sprite_frames: SpriteFrames
 
 signal collected(health: int)
 
 
 func _ready() -> void:
-	# Juice: crimson with a strong emissive core so the bottle blooms and
-	# reads at speed against the muted road.
-	_juice_mat = StandardMaterial3D.new()
-	_juice_mat.albedo_color = Color(0.62, 0.12, 0.22)
-	_juice_mat.roughness = 0.25
-	_juice_mat.emission_enabled = true
-	_juice_mat.emission = Color(0.9, 0.12, 0.28)
-	_juice_mat.emission_energy_multiplier = 1.6
-
-	# Cap: polished gold, catching the dusk sun.
-	_cap_mat = StandardMaterial3D.new()
-	_cap_mat.albedo_color = Color(0.72, 0.73, 0.78)  # silver, palette-neutral
-	_cap_mat.metallic = 0.9
-	_cap_mat.roughness = 0.25
-
-	_body_mesh = CylinderMesh.new()
-	_body_mesh.top_radius = 0.14
-	_body_mesh.bottom_radius = 0.16
-	_body_mesh.height = 0.42
-
-	_neck_mesh = CylinderMesh.new()
-	_neck_mesh.top_radius = 0.055
-	_neck_mesh.bottom_radius = 0.1
-	_neck_mesh.height = 0.14
-
-	_cap_mesh = CylinderMesh.new()
-	_cap_mesh.top_radius = 0.06
-	_cap_mesh.bottom_radius = 0.06
-	_cap_mesh.height = 0.06
+	_bottle_sprite_frames = PixelSprites.bottle_frames()
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -88,10 +54,6 @@ func _physics_process(delta: float) -> void:
 		return
 	_bottle_time += delta
 
-	# Heartbeat pulse on the shared juice material: one property write per
-	# tick drives the glow of every bottle on the road.
-	_juice_mat.emission_energy_multiplier = 1.6 + sin(_bottle_time * 3.2) * 0.7
-
 	var i := _bottles.size() - 1
 	while i >= 0:
 		var b := _bottles[i]
@@ -102,9 +64,9 @@ func _physics_process(delta: float) -> void:
 		var xf: Transform3D = _track.transform_at(bs, blat)
 		var bob: float = 0.15 + sin(_bottle_time * 2.4 + b["phase"]) * 0.1
 		node.position = xf.origin + xf.basis.y * bob
-		node.rotation.y = _bottle_time * 1.8 + b["phase"]
-		# Gentle swell on top of the bob (phase-offset per bottle, in step
-		# with the glow pulse) so pickups breathe rather than sit static.
+		# Gentle swell on top of the bob (phase-offset per bottle) so
+		# pickups breathe rather than sit static; the sprite's own frame
+		# flip supplies the sparkle. Billboarding handles the facing.
 		node.scale = Vector3.ONE * (1.0 + sin(_bottle_time * 3.2 + b["phase"]) * 0.06)
 
 		if _player.run_state == _player.RunState.RUNNING \
@@ -121,27 +83,11 @@ func _physics_process(delta: float) -> void:
 		i -= 1
 
 
-## A little cranberry-juice bottle: crimson body, short neck, gold cap.
-## Built entirely from the shared meshes/materials created in _ready().
+## A little cranberry-juice bottle: one billboard sprite, sparkle baked in.
+## 12 art rows at 0.05 m/texel = a ~0.6 m bottle, matching the old mesh.
 func _make_bottle() -> Node3D:
 	var item := Node3D.new()
-
-	var body := MeshInstance3D.new()
-	body.mesh = _body_mesh
-	body.position = Vector3(0, 0.21, 0)
-	body.material_override = _juice_mat
-	item.add_child(body)
-
-	var neck := MeshInstance3D.new()
-	neck.mesh = _neck_mesh
-	neck.position = Vector3(0, 0.49, 0)
-	neck.material_override = _juice_mat
-	item.add_child(neck)
-
-	var cap := MeshInstance3D.new()
-	cap.mesh = _cap_mesh
-	cap.position = Vector3(0, 0.59, 0)
-	cap.material_override = _cap_mat
-	item.add_child(cap)
-
+	var sprite := PixelSprites.make_sprite(_bottle_sprite_frames, 12, 0.05)
+	sprite.play(&"default")
+	item.add_child(sprite)
 	return item

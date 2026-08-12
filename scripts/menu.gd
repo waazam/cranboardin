@@ -1,7 +1,7 @@
 extends Node3D
-## Main menu: the pink board rests on the ground in the neon dusk, waiting
-## for a rider, with the procedural city backdrop behind it and its own
-## dreamy synth theme. Any key / click / tap starts the game.
+## Main menu: an empty neon street corner at dusk -- glowing road, lone
+## streetlight, city backdrop -- with its own dreamy synth theme. Any
+## key / click / tap starts the game.
 
 const GAME_SCENE := "res://scenes/main.tscn"
 const SAVE_PATH := "user://save.cfg"  # written by main.gd
@@ -21,21 +21,22 @@ var _font: SystemFont
 var _prompt: Label
 var _prompt_time: float = 0.0
 var _starting: bool = false
-var _camera: Camera3D
-var _camera_home: Vector3
 var _fade_layer: CanvasLayer
 
 
 func _ready() -> void:
 	if _is_mobile():
-		viewport_frame.stretch_shrink = 6
+		viewport_frame.stretch_shrink = 7
+
+	# A still postcard: freeze the backdrop (stops the circling birds)
+	# once it has built itself.
+	$ViewportFrame/SubViewport/Background.process_mode = Node.PROCESS_MODE_DISABLED
 
 	# Load the game scene in the background while the menu idles, so
 	# pressing start swaps worlds without a visible hitch.
 	ResourceLoader.load_threaded_request(GAME_SCENE)
 
 	_build_stage()
-	_place_board()
 	_build_camera()
 	_build_ui()
 	_build_crt_overlay()
@@ -51,12 +52,6 @@ func _process(delta: float) -> void:
 	# Hard on/off arcade blink -- no fade, like a cabinet attract screen.
 	_prompt_time += delta
 	_prompt.visible = fmod(_prompt_time, 0.9) < 0.55
-
-	# Slow attract-mode drift: the camera breathes sideways and bobs a
-	# touch, so the street corner feels alive without anything moving in it.
-	if _camera:
-		_camera.position = _camera_home + Vector3(
-				sin(_prompt_time * 0.21) * 0.35, sin(_prompt_time * 0.34) * 0.06, 0.0)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -123,10 +118,9 @@ func _swap_to_game() -> void:
 
 
 # --- Stage ------------------------------------------------------------------
-# A little neon street corner, so the scene feels inhabited without the
-# rider: a road strip with the game's glowing center dashes and teal edge
-# lines running diagonally past the camera, and a streetlight leaning over
-# the board.
+# A little neon street corner: a road strip with the game's glowing center
+# dashes and teal edge lines running diagonally past the camera, and a
+# streetlight leaning in over it.
 
 ## Road heading in radians -- shared by the strip, its markings, and the
 ## board so everything lines up along the same diagonal.
@@ -242,25 +236,14 @@ func _make_streetlight(pos: Vector3) -> Node3D:
 	return item
 
 
-## The board rests wheels-down on the road near the center line, angled
-## with the street so its profile and pink deck read to the camera.
-func _place_board() -> void:
-	var board := Skateboard.new()
-	# Its gameplay _physics_process would stomp the pose every frame.
-	board.set_physics_process(false)
-	board.position = Vector3(0.8, 0.09, 0.5)
-	board.rotation.y = ROAD_YAW
-	world.add_child(board)
-
-
 func _build_camera() -> void:
-	_camera = Camera3D.new()
-	_camera.fov = 55.0
-	_camera_home = Vector3(0.0, 1.35, 3.1)
-	_camera.position = _camera_home
-	world.add_child(_camera)
-	_camera.look_at(Vector3(0.55, 0.9, -1.0), Vector3.UP)
-	_camera.current = true
+	# Fixed shot: the menu is a still postcard of the street corner.
+	var camera := Camera3D.new()
+	camera.fov = 55.0
+	camera.position = Vector3(0.0, 1.35, 3.1)
+	world.add_child(camera)
+	camera.look_at(Vector3(0.55, 0.9, -1.0), Vector3.UP)
+	camera.current = true
 
 
 # --- UI ---------------------------------------------------------------------
@@ -309,13 +292,12 @@ func _build_ui() -> void:
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 
 	var top := viewport_size.y * 0.24
-	# Solid hot-pink logo with a hard black drop shadow for chunky weight.
-	var title := _make_label(ui, "CRANBOARDIN", 76, NEON_PINK, Vector2(58, top))
-	title.add_theme_color_override("font_shadow_color", CRT_BLACK)
+	# Same treatment as the LOADING card: white type over a hot pink
+	# drop shadow.
+	var title := _make_label(ui, "CRANBOARDIN", 76, Color(1, 1, 1), Vector2(58, top))
+	title.add_theme_color_override("font_shadow_color", NEON_PINK)
 	title.add_theme_constant_override("shadow_offset_x", 7)
 	title.add_theme_constant_override("shadow_offset_y", 7)
-
-	_make_label(ui, "SKATE . DODGE . SURVIVE", 22, NEON_CYAN, Vector2(62, top + 104))
 
 	# Persistent best from past sessions, zero-padded arcade style.
 	var cfg := ConfigFile.new()
@@ -323,9 +305,9 @@ func _build_ui() -> void:
 		_make_label(ui, "HI-SCORE %06d   LV %02d" % [
 					int(cfg.get_value("best", "score", 0)),
 					int(cfg.get_value("best", "level", 1)),
-				], 18, NEON_PURPLE, Vector2(62, top + 148))
+				], 18, NEON_PURPLE, Vector2(62, top + 120))
 
-	_prompt = _make_label(ui, ">> PRESS START <<", 26, Color(1, 1, 1), Vector2(62, top + 192))
+	_prompt = _make_label(ui, ">> PRESS START <<", 26, Color(1, 1, 1), Vector2(62, top + 168))
 	_prompt.add_theme_color_override("font_shadow_color", NEON_PINK)
 	_prompt.add_theme_constant_override("shadow_offset_x", 3)
 	_prompt.add_theme_constant_override("shadow_offset_y", 3)

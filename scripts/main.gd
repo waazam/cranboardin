@@ -78,9 +78,11 @@ var _entry_fade: ColorRect
 
 
 func _ready() -> void:
-	# Chunkier pixels on mobile (1/5 res vs 1/3 on desktop).
+	# Much chunkier pixels on mobile (1/7 res vs 1/3 on desktop) -- phone
+	# screens are dense enough that heavy shrink still reads, and it keeps
+	# the GPU cost tiny.
 	if hud.is_mobile():
-		viewport_frame.stretch_shrink = 5
+		viewport_frame.stretch_shrink = 7
 
 	_setup_audio()
 

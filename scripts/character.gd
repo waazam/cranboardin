@@ -45,7 +45,10 @@ var _mat_colors: Array[Color] = []  # each mat's normal neon, parallel to _mats
 
 func _ready() -> void:
 	_model = MODEL_SCENE.instantiate() as Node3D
-	_model.position.y = stand_height
+	# Slightly below deck-top: swinging the legs apart (stance_spread
+	# below) arcs the feet upward a touch, so the model sinks by about the
+	# same amount to keep the soles planted.
+	_model.position.y = stand_height - 0.012
 	# glTF models face +Z and the run heads toward -Z, so PI would face the
 	# rider square downhill; subtracting the stance angle turns him across
 	# the board (feet spread along the deck) like a real skater.
@@ -75,7 +78,8 @@ func _ready() -> void:
 		_lean_modifier = LeanModifier.new()
 		var model_yaw := PI - deg_to_rad(stance_angle_deg)
 		_lean_modifier.axis = Vector3(sin(model_yaw), 0.0, -cos(model_yaw))
-		_lean_modifier.stance_spread = deg_to_rad(13.0)
+		_lean_modifier.stance_spread = deg_to_rad(10.0)
+		_lean_modifier.stance_narrow = deg_to_rad(5.0)
 		skeleton.add_child(_lean_modifier)
 
 	_play(&"Idle", 0.0)

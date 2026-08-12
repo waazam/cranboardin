@@ -18,6 +18,9 @@ var lean: float = 0.0
 var axis: Vector3 = Vector3(1, 0, 0)
 ## Half-angle in radians each leg swings outward along the travel axis.
 var stance_spread: float = 0.0
+## Half-angle in radians each leg squeezes inward ACROSS the travel axis,
+## pulling the hip-width apart feet onto the narrow deck.
+var stance_narrow: float = 0.0
 
 
 func _process_modification() -> void:
@@ -34,6 +37,15 @@ func _process_modification() -> void:
 		for side: Array in [["L", 1.0], ["R", -1.0]]:
 			_roll_bone(sk, "DEF-thigh.%s" % side[0], spread_axis, stance_spread * side[1])
 			_roll_bone(sk, "DEF-foot.%s" % side[0], spread_axis, -stance_spread * side[1])
+
+	if stance_narrow > 0.0005:
+		# Legs squeeze together in the plane ACROSS the travel axis
+		# (rotation about the travel axis itself), so the hip-wide feet
+		# come in over the deck instead of overhanging its sides.
+		var narrow_axis := axis.normalized()
+		for side: Array in [["L", 1.0], ["R", -1.0]]:
+			_roll_bone(sk, "DEF-thigh.%s" % side[0], narrow_axis, stance_narrow * side[1])
+			_roll_bone(sk, "DEF-foot.%s" % side[0], narrow_axis, -stance_narrow * side[1])
 
 	if absf(lean) >= 0.0005:
 		var per := lean / SPINE_BONES.size()

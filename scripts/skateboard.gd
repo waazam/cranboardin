@@ -55,9 +55,10 @@ func _build() -> void:
 	# Painted-finish sheen on the underside/rails (the top is grip tape).
 	var deck_mat := _flat_material(deck_color)
 	deck_mat.roughness = 0.55
+	# Deck runs a touch long so the rider's spread stance fits fully on it.
 	var deck := MeshInstance3D.new()
 	var deck_mesh := BoxMesh.new()
-	deck_mesh.size = Vector3(0.26, 0.05, 0.85)
+	deck_mesh.size = Vector3(0.26, 0.05, 0.96)
 	deck.mesh = deck_mesh
 	deck.position = Vector3(0, DECK_TOP_HEIGHT - 0.025, 0)
 	deck.material_override = deck_mat
@@ -69,7 +70,7 @@ func _build() -> void:
 		var tail_mesh := BoxMesh.new()
 		tail_mesh.size = Vector3(0.24, 0.045, 0.16)
 		tail.mesh = tail_mesh
-		tail.position = Vector3(0, DECK_TOP_HEIGHT - 0.01, z_dir * 0.49)
+		tail.position = Vector3(0, DECK_TOP_HEIGHT - 0.01, z_dir * 0.545)
 		tail.rotation.x = -z_dir * 0.42
 		tail.material_override = deck_mat
 		add_child(tail)
@@ -79,7 +80,7 @@ func _build() -> void:
 	# what actually sells the pink deck.
 	var grip := MeshInstance3D.new()
 	var grip_mesh := BoxMesh.new()
-	grip_mesh.size = Vector3(0.24, 0.006, 0.8)
+	grip_mesh.size = Vector3(0.24, 0.006, 0.9)
 	grip.mesh = grip_mesh
 	grip.position = Vector3(0, DECK_TOP_HEIGHT + 0.004, 0)
 	var grip_mat := _flat_material(Color(0.62, 0.14, 0.36))
@@ -92,7 +93,7 @@ func _build() -> void:
 	# neon pink so it matches the ramps and center line.
 	var glow := MeshInstance3D.new()
 	var glow_mesh := BoxMesh.new()
-	glow_mesh.size = Vector3(0.2, 0.015, 0.5)
+	glow_mesh.size = Vector3(0.2, 0.015, 0.6)
 	glow.mesh = glow_mesh
 	glow.position = Vector3(0, DECK_TOP_HEIGHT - 0.058, 0)
 	# Shaded, not unshaded: Godot discards EMISSION on unshaded materials,
@@ -115,7 +116,7 @@ func _build() -> void:
 	var wheel_mat := _flat_material(wheel_color)
 	wheel_mat.metallic = 0.4
 	wheel_mat.roughness = 0.3
-	for z in [-0.27, 0.27]:
+	for z in [-0.32, 0.32]:
 		var truck := MeshInstance3D.new()
 		var truck_mesh := BoxMesh.new()
 		truck_mesh.size = Vector3(0.18, 0.06, 0.08)

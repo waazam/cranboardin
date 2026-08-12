@@ -1,13 +1,16 @@
 extends Node3D
 ## Neon boost pads laid flat on the road: cyan ">>>" chevrons that pulse
-## and fling the player forward for a moment when ridden over (airborne
-## players sail past them). One-shot per pass; placement is seeded per
-## level like every other spawner.
+## and surge the player forward for a good couple of seconds when ridden
+## over (airborne players sail past them). Pads are plentiful and their
+## pickup window is deliberately generous -- grazing one at speed should
+## count, so runs chain surge to surge instead of punishing near-misses.
+## One-shot per pass; placement is seeded per level like every other
+## spawner.
 
 signal boosted()
 
-const PAD_S_RANGE := 1.6
-const PAD_LATERAL_RANGE := 1.4
+const PAD_S_RANGE := 2.0
+const PAD_LATERAL_RANGE := 1.7
 const PAD_MAX_HEIGHT := 0.35
 
 ## One shared unshaded shader for every chevron: each chevron bakes its 0..1
@@ -27,8 +30,8 @@ void fragment() {
 }
 """
 
-@export var base_count: int = 7
-@export var count_per_level: int = 2
+@export var base_count: int = 11
+@export var count_per_level: int = 3
 
 var _track: Node3D
 var _player: Node3D
@@ -120,5 +123,7 @@ func _physics_process(delta: float) -> void:
 				and absf(pad["lat"] - _player.lateral) < PAD_LATERAL_RANGE \
 				and _player.height < PAD_MAX_HEIGHT:
 			pad["used"] = true
-			_player.apply_boost()
+			# Longer than the player's 1.8s default: pads are the run's rhythm
+			# now, so each hit should feel like a real surge, not a blip.
+			_player.apply_boost(2.4)
 			boosted.emit()

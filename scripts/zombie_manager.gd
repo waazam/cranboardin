@@ -5,8 +5,25 @@ extends Node3D
 ## whole level's worth alive), and are freed once passed.
 ##
 ## Zombies live in the same spline space as the player (s, lateral) and
-## shamble toward the player's lane -- dodging them is the core game, and
-## they can be jumped over (hits only land when the player is low).
+## hunt the player's lane -- dodging them is the core game, and they can
+## be jumped over (hits only land when the player is low).
+##
+## The hunt is smarter than a straight chase, but every layer stays fair:
+##   PREDICTIVE INTERCEPT -- zombies lead the player's carve, aiming where
+##     the lateral velocity says the player WILL be at contact time.
+##     Runners lead hard; shamblers only vaguely anticipate.
+##   RUNNER LUNGE -- a runner near the player freezes for a readable beat,
+##     then bursts sideways-and-forward. The burst never out-turns the
+##     player's own steering, so a committed dodge always wins.
+##   PACK FLANKING -- pack members each carry a persistent lane offset from
+##     the predicted intercept, so a pack forms a short wall to jump or
+##     thread instead of a single dodgeable column. The spread is capped
+##     so a gap always survives at one road edge.
+##   SHAMBLER WEAVE -- shamblers overlay a slow personal sine drift on
+##     their target lane so the approach reads organic, not mechanical.
+## All per-zombie brains live in the plan/active dictionaries, and every
+## random trait is rolled at plan time from the seeded RNG, so a level
+## replays identically for the same seed.
 ##
 ## Spawn types:
 ##   SIDE  -- starts just off the road edge and walks in across it.
@@ -25,6 +42,30 @@ const HIT_LATERAL_RANGE := 0.95
 const HIT_MAX_HEIGHT := 1.0
 const NEAR_MISS_RANGE := 2.4
 
+## Intercept lead factors: fraction of the full velocity-lead each class
+## applies. Runners genuinely cut you off; shamblers only half-remember to.
+const SHAMBLER_LEAD := 0.35
+const RUNNER_LEAD := 0.9
+## Time-to-contact clamp for the lead estimate -- beyond ~1.2s a prediction
+## is guesswork, and an uncapped lead would send far zombies lane-hopping.
+const TTC_MAX := 1.2
+
+## Runner lunge: inside this s-gap the runner winds up (a readable freeze),
+## then bursts. The burst's lateral speed is hard-capped just under the
+## player's steer_speed (10.5) so out-steering a lunge is always possible.
+const LUNGE_RANGE := 12.0
+const LUNGE_WINDUP := 0.3
+const LUNGE_DURATION := 0.55
+const LUNGE_COOLDOWN := 1.6
+const LUNGE_SHAMBLE_MULT := 2.4
+const LUNGE_CLOSE_MULT := 2.6
+const MAX_LATERAL_SPEED := 10.0
+
+## Pack members fan out this far either side of the predicted lane. Capped
+## at 1.2 so a full pack wall spans ~4.3 units of hitbox against a ~7-unit
+## playable road: at least one edge lane (or a jump) always escapes.
+const PACK_SPREAD := 1.2
+
 @export var damage_per_hit: int = 34  # three hits without healing ends the run
 @export var base_count: int = 78
 @export var count_per_level: int = 24
@@ -35,6 +76,9 @@ var _rng := RandomNumberGenerator.new()
 var _spawns: Array[Dictionary] = []
 var _next_spawn: int = 0
 var _active: Array[Dictionary] = []
+## Shared clock for the shambler weave -- each zombie's plan-time phase
+## offsets into it, so one accumulator serves the whole horde.
+var _weave_time: float = 0.0
 ## Zombies mid-launch after a boost smash: {node, vel, spin, t}.
 var _smashed: Array[Dictionary] = []
 ## Small shared palettes rather than per-instance materials: however big the
@@ -114,6 +158,7 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 		(sm["node"] as Node3D).queue_free()
 	_smashed.clear()
 	_next_spawn = 0
+	_weave_time = 0.0  # same seed, same weave: replays stay identical
 
 	# Placement is fully random over the run (sorted afterwards for the
 	# activation cursor): clumps and dead stretches emerge naturally, and
@@ -140,6 +185,15 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 				lat = _rng.randf_range(-half + 1.5, half - 1.5)
 			# Runners: rare fast sprinters, more common on later levels.
 			var runner: bool = _rng.randf() < minf(0.10 + 0.03 * (level - 1), 0.3)
+			# Flanking: pack members fan out evenly across the capped spread
+			# (with a little jitter so the wall isn't a picket fence);
+			# loners drift a touch off-lane so solo dodges vary too.
+			var flank: float
+			if pack > 1:
+				flank = lerpf(-PACK_SPREAD, PACK_SPREAD, float(i) / float(pack - 1)) \
+						+ _rng.randf_range(-0.2, 0.2)
+			else:
+				flank = _rng.randf_range(-0.8, 0.8)
 			_spawns.append({
 				"s": spawn_s,
 				"lat": lat,
@@ -148,6 +202,13 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 				"shamble": _rng.randf_range(3.2, 4.0) + (level - 1) * 0.1 if runner \
 						else _rng.randf_range(1.9, 2.7) + (level - 1) * 0.12,
 				"close": 3.5 if runner else 1.5,
+				"flank": clampf(flank, -PACK_SPREAD, PACK_SPREAD),
+				# Weave traits are rolled here even for runners (who ignore
+				# them) so the RNG stream -- and thus the whole level layout
+				# -- stays identical whatever mix of classes gets rolled.
+				"weave_phase": _rng.randf_range(0.0, TAU),
+				"weave_amp": _rng.randf_range(0.25, 0.6),
+				"weave_rate": _rng.randf_range(0.6, 1.1),
 			})
 			placed += 1
 	_spawns.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["s"] < b["s"])
@@ -162,6 +223,7 @@ func _physics_process(delta: float) -> void:
 		_activate(_spawns[_next_spawn])
 		_next_spawn += 1
 
+	_weave_time += delta
 	var player_running: bool = _player.run_state == _player.RunState.RUNNING
 	var half: float = _track.road_width * 0.5
 	var i := _active.size() - 1
@@ -169,12 +231,57 @@ func _physics_process(delta: float) -> void:
 		var z := _active[i]
 		var zs: float = z["s"]
 		var zlat: float = z["lat"]
-
-		# Shamble toward the player's lane; drift slightly up-road too.
 		var shamble: float = z["shamble"]
-		zlat = move_toward(zlat, clampf(_player.lateral, -half + 0.4, half - 0.4), shamble * delta)
+		var close: float = z["close"]
+		var gap: float = zs - _player.s
+
+		# Runner lunge: a three-beat state machine on one timer. Stalking
+		# runners inside range freeze (windup -- the player's read window),
+		# then burst both sideways and down-road, then cool off before they
+		# can try again.
+		if z["runner"]:
+			z["lunge_t"] -= delta
+			match z["lunge_state"]:
+				0:  # stalking / cooling down
+					if player_running and gap > 0.0 and gap < LUNGE_RANGE and z["lunge_t"] <= 0.0:
+						z["lunge_state"] = 1
+						z["lunge_t"] = LUNGE_WINDUP
+				1:  # windup: plant the feet so the pounce telegraphs
+					close = 0.0
+					shamble *= 0.3
+					if z["lunge_t"] <= 0.0:
+						z["lunge_state"] = 2
+						z["lunge_t"] = LUNGE_DURATION
+						var anim := z["anim"] as AnimationPlayer
+						if anim:
+							anim.speed_scale = z["anim_speed"] * 1.7
+				2:  # lunge: fast, but never faster than the player can steer
+					shamble *= LUNGE_SHAMBLE_MULT
+					close *= LUNGE_CLOSE_MULT
+					if z["lunge_t"] <= 0.0:
+						z["lunge_state"] = 0
+						z["lunge_t"] = LUNGE_COOLDOWN
+						var anim := z["anim"] as AnimationPlayer
+						if anim:
+							anim.speed_scale = z["anim_speed"]
+
+		# Predictive intercept: lead the player's carve by their lateral
+		# velocity over the estimated time-to-contact. Behind the player the
+		# gap (and so the lead) collapses to zero -- plain pursuit.
+		var ttc: float = clampf(gap / maxf(_player.current_speed, 1.0), 0.0, TTC_MAX)
+		var lead: float = RUNNER_LEAD if z["runner"] else SHAMBLER_LEAD
+		var target: float = _player.lateral + _player._lateral_velocity * ttc * lead + z["flank"]
+		# Shambler weave: a slow personal sine so the drift feels undead,
+		# not servo-driven. Runners are too locked-on to wander.
+		if not z["runner"]:
+			target += sin(_weave_time * z["weave_rate"] + z["weave_phase"]) * z["weave_amp"]
+
+		# The lateral cap is the fairness line: whatever multipliers stack,
+		# a zombie can never out-turn the player's steer_speed.
+		shamble = minf(shamble, MAX_LATERAL_SPEED)
+		zlat = move_toward(zlat, clampf(target, -half + 0.4, half - 0.4), shamble * delta)
 		if player_running and zs > _player.s:
-			zs = maxf(zs - z["close"] * delta, _player.s)
+			zs = maxf(zs - close * delta, _player.s)
 		z["s"] = zs
 		z["lat"] = zlat
 
@@ -287,11 +394,23 @@ func _activate(spawn: Dictionary) -> void:
 			anim.speed_scale = _rng.randf_range(1.2, 1.5) if is_runner \
 					else _rng.randf_range(0.95, 1.25)
 
+	# The active dict is the zombie's whole brain: plan-time traits carried
+	# over verbatim, plus the lunge state machine and the anim handle (the
+	# lunge tell bumps speed_scale, so remember the resting value).
 	_active.append({
 		"node": node,
 		"s": spawn["s"],
 		"lat": spawn["lat"],
 		"shamble": spawn["shamble"],
 		"close": spawn.get("close", 1.5),
+		"runner": is_runner,
+		"flank": spawn.get("flank", 0.0),
+		"weave_phase": spawn.get("weave_phase", 0.0),
+		"weave_amp": spawn.get("weave_amp", 0.0),
+		"weave_rate": spawn.get("weave_rate", 1.0),
+		"lunge_state": 0,
+		"lunge_t": 0.0,
+		"anim": anim,
+		"anim_speed": anim.speed_scale if anim else 1.0,
 		"scored": false,
 	})

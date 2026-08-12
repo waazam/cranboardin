@@ -21,13 +21,13 @@ signal finished(time: float, top_speed: float)
 enum RunState { RUNNING, DEAD, FINISHED }
 
 # --- Tuning ---------------------------------------------------------------
-@export var base_speed: float = 7.0
-@export var max_speed: float = 27.0
-@export var accel_boost: float = 6.0
+@export var base_speed: float = 9.0
+@export var max_speed: float = 34.0
+@export var accel_boost: float = 8.0
 @export var brake_strength: float = 7.0
-@export var speed_response: float = 18.0
-@export var steer_speed: float = 9.0
-@export var steer_response: float = 30.0
+@export var speed_response: float = 22.0
+@export var steer_speed: float = 10.5
+@export var steer_response: float = 34.0
 @export var jump_velocity: float = 8.5
 @export var gravity: float = 22.0
 @export var max_health: int = 100
@@ -327,7 +327,7 @@ func _update_speed(delta: float) -> void:
 	accel_axis = clampf(accel_axis, -1.0, 1.0)
 
 	_boost_timer = maxf(_boost_timer - delta, 0.0)
-	var pad_bonus := 11.0 if _boost_timer > 0.0 else 0.0
+	var pad_bonus := 14.0 if _boost_timer > 0.0 else 0.0
 
 	var target_speed: float = lerp(base_speed, max_speed, get_progress())
 	target_speed += accel_boost * maxf(accel_axis, 0.0)
@@ -408,7 +408,7 @@ func launch(vv: float) -> void:
 ## lined-up horde can chain into a rampage.
 func extend_boost(amount: float) -> void:
 	if _boost_timer > 0.0:
-		_boost_timer = minf(_boost_timer + amount, 2.5)
+		_boost_timer = minf(_boost_timer + amount, 4.0)
 
 
 func is_boosting() -> bool:

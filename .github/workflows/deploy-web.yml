@@ -41,12 +41,19 @@ jobs:
           mv /tmp/tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
 
       - name: Export web build
+        # The html is exported under a per-commit basename: Godot derives
+        # every asset name (.wasm, .pck, worklets, icons) from it, so each
+        # deploy ships brand-new file names and no browser can ever reuse a
+        # stale cached build. The html itself is renamed back to index.html
+        # -- it is tiny and revalidates via ETag on every load.
         run: |
           GODOT=~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64
+          STAMP=game-${GITHUB_SHA::8}
           mkdir -p build/web
           $GODOT --headless --import || true
-          $GODOT --headless --export-release "Web" build/web/index.html
-          test -f build/web/index.wasm
+          $GODOT --headless --export-release "Web" build/web/${STAMP}.html
+          test -f build/web/${STAMP}.wasm
+          mv build/web/${STAMP}.html build/web/index.html
 
       - name: Upload to server
         run: |

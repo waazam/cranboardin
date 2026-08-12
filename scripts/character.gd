@@ -66,13 +66,16 @@ func _ready() -> void:
 	assert(_anim != null, "AnimationLibrary GLB is missing its AnimationPlayer")
 	_anim.animation_finished.connect(_on_animation_finished)
 
-	# Post-animation spine lean (see lean_modifier.gd). The travel-forward
-	# axis in the model's space depends on the stance rotation applied above.
+	# Post-animation stance + spine lean (see lean_modifier.gd). The
+	# travel-forward axis in the model's space depends on the stance
+	# rotation applied above. The spread turns the Idle clip's narrow
+	# standing pose into feet planted parallel along the deck.
 	var skeleton := _model.find_child("Skeleton3D", true, false) as Skeleton3D
 	if skeleton:
 		_lean_modifier = LeanModifier.new()
 		var model_yaw := PI - deg_to_rad(stance_angle_deg)
 		_lean_modifier.axis = Vector3(sin(model_yaw), 0.0, -cos(model_yaw))
+		_lean_modifier.stance_spread = deg_to_rad(13.0)
 		skeleton.add_child(_lean_modifier)
 
 	_play(&"Idle", 0.0)

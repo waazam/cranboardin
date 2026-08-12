@@ -23,6 +23,7 @@ var _prompt_time: float = 0.0
 var _starting: bool = false
 var _camera: Camera3D
 var _camera_home: Vector3
+var _fade_layer: CanvasLayer
 
 
 func _ready() -> void:
@@ -78,10 +79,10 @@ func _start_game() -> void:
 	fade.color = Color(CRT_BLACK, 0.0)
 	fade.size = get_viewport().get_visible_rect().size
 	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var layer := CanvasLayer.new()
-	layer.layer = 30  # above the UI and the vignette
-	layer.add_child(fade)
-	add_child(layer)
+	_fade_layer = CanvasLayer.new()
+	_fade_layer.layer = 30  # above the UI and the vignette
+	_fade_layer.add_child(fade)
+	add_child(_fade_layer)
 
 	var tween := create_tween()
 	tween.set_parallel(true)
@@ -90,10 +91,35 @@ func _start_game() -> void:
 	tween.chain().tween_callback(_swap_to_game)
 
 
+## Swap once the screen is black: put up the LOADING card, make sure it has
+## actually been presented, then do the heavy work (finishing the threaded
+## load and building the level in the game's _ready). While that blocks --
+## noticeably on the web build -- the presented frame is the loading card,
+## not a blank canvas. The game scene then fades in from the same black.
 func _swap_to_game() -> void:
-	# Blocks only if the background load somehow isn't done yet.
+	var loading := Label.new()
+	loading.text = "LOADING..."
+	loading.set_anchors_preset(Control.PRESET_FULL_RECT)
+	loading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loading.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	loading.add_theme_font_override("font", _font)
+	loading.add_theme_font_size_override("font_size", 40)
+	loading.add_theme_color_override("font_color", Color(1, 1, 1))
+	loading.add_theme_color_override("font_shadow_color", NEON_PINK)
+	loading.add_theme_constant_override("shadow_offset_x", 4)
+	loading.add_theme_constant_override("shadow_offset_y", 4)
+	_fade_layer.add_child(loading)
+
+	# Two frames so the card is drawn and presented before we block.
+	await get_tree().process_frame
+	await get_tree().process_frame
+
 	var packed := ResourceLoader.load_threaded_get(GAME_SCENE) as PackedScene
-	get_tree().change_scene_to_packed(packed)
+	var tree := get_tree()
+	var game := packed.instantiate()
+	tree.root.add_child(game)  # level generation happens here, card on screen
+	tree.current_scene = game
+	queue_free()  # drop the menu (and this card) now the game is ready
 
 
 # --- Stage ------------------------------------------------------------------

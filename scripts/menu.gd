@@ -11,7 +11,14 @@ const SAVE_PATH := "user://save.cfg"  # written by main.gd
 @onready var viewport_frame: SubViewportContainer = $ViewportFrame
 @onready var world: Node3D = $ViewportFrame/SubViewport/World
 
+## Arcade palette: hot magenta, cyan, marquee gold, CRT phosphor black.
+const NEON_PINK := Color(1.0, 0.29, 0.66)
+const NEON_CYAN := Color(0.36, 0.95, 0.98)
+const NEON_GOLD := Color(1.0, 0.78, 0.32)
+const CRT_BLACK := Color(0.05, 0.02, 0.09)
+
 var _music: AudioStreamPlayer
+var _font: SystemFont
 var _prompt: Label
 var _prompt_time: float = 0.0
 var _starting: bool = false
@@ -25,6 +32,7 @@ func _ready() -> void:
 	_build_character()
 	_build_camera()
 	_build_ui()
+	_build_crt_overlay()
 	_start_music()
 
 
@@ -34,9 +42,9 @@ static func _is_mobile() -> bool:
 
 
 func _process(delta: float) -> void:
-	# Blinking start prompt.
+	# Hard on/off arcade blink -- no fade, like a cabinet attract screen.
 	_prompt_time += delta
-	_prompt.visible = fmod(_prompt_time, 1.2) < 0.8
+	_prompt.visible = fmod(_prompt_time, 0.9) < 0.55
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -140,55 +148,163 @@ func _build_camera() -> void:
 
 # --- UI ---------------------------------------------------------------------
 
+## Bitmap-ish text: a monospace system face with every smoothing feature
+## switched off, so glyph edges land on hard pixel boundaries.
+##
+## The web export has no access to system fonts, so none of these names
+## resolve there -- hence the explicit theme-font fallback, which keeps the
+## menu legible and merely loses the crisp aliased edges.
+func _retro_font() -> SystemFont:
+	var font := SystemFont.new()
+	font.font_names = PackedStringArray([
+		"Press Start 2P", "Consolas", "Courier New", "monospace",
+	])
+	font.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	font.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	font.hinting = TextServer.HINTING_NONE
+	font.multichannel_signed_distance_field = false
+	var fallbacks: Array[Font] = []
+	if ThemeDB.fallback_font:
+		fallbacks.append(ThemeDB.fallback_font)
+	font.fallbacks = fallbacks
+	return font
+
+
+func _make_label(parent: Node, text: String, size: int, color: Color, pos: Vector2) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_override("font", _font)
+	label.add_theme_font_size_override("font_size", size)
+	label.add_theme_color_override("font_color", color)
+	label.position = pos
+	parent.add_child(label)
+	return label
+
+
 func _build_ui() -> void:
+	_font = _retro_font()
 	var ui := CanvasLayer.new()
 	add_child(ui)
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 
-	var title := Label.new()
-	title.text = "CRANBOARDIN"
-	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_color_override("font_color", Color(1.0, 0.42, 0.7))
-	title.add_theme_color_override("font_shadow_color", Color(0.25, 0.85, 0.9, 0.85))
-	title.add_theme_constant_override("shadow_offset_x", 4)
-	title.add_theme_constant_override("shadow_offset_y", 4)
-	title.position = Vector2(60, viewport_size.y * 0.24)
-	ui.add_child(title)
+	_build_bezel(ui, viewport_size)
 
-	var subtitle := Label.new()
-	subtitle.text = "skate. dodge. survive."
-	subtitle.add_theme_font_size_override("font_size", 24)
-	subtitle.add_theme_color_override("font_color", Color(0.5, 0.92, 0.95))
-	subtitle.position = Vector2(64, viewport_size.y * 0.24 + 88)
-	ui.add_child(subtitle)
+	# Cabinet header, split to the two top corners.
+	_make_label(ui, "CRANBOARD CO.", 14, NEON_CYAN * Color(1, 1, 1, 0.75), Vector2(34, 26))
+	_make_label(ui, "CREDIT 01", 14, NEON_GOLD, Vector2(viewport_size.x - 132, 26))
 
-	# Persistent best from past sessions, in the warm window-neon gold.
+	var top := viewport_size.y * 0.24
+
+	# Title, printed four times: a hard black drop shadow for arcade weight,
+	# then cyan/magenta fringes peeking out either side of the core --
+	# cheap chromatic aberration, the way a misconverged CRT does it.
+	var title_pos := Vector2(58, top)
+	_make_label(ui, "CRANBOARDIN", 76, CRT_BLACK, title_pos + Vector2(7, 7))
+	_make_label(ui, "CRANBOARDIN", 76, NEON_CYAN, title_pos + Vector2(-4, 0))
+	_make_label(ui, "CRANBOARDIN", 76, NEON_PINK, title_pos + Vector2(4, 0))
+	_make_label(ui, "CRANBOARDIN", 76, Color(1.0, 0.86, 0.95), title_pos)
+
+	_make_label(ui, "SKATE . DODGE . SURVIVE", 22, NEON_CYAN, Vector2(62, top + 96))
+
+	# Persistent best from past sessions, zero-padded arcade style.
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) == OK and int(cfg.get_value("best", "score", 0)) > 0:
-		var best := Label.new()
-		best.text = "best score: %d  -  reached level %d" \
-				% [int(cfg.get_value("best", "score", 0)), int(cfg.get_value("best", "level", 1))]
-		best.add_theme_font_size_override("font_size", 16)
-		best.add_theme_color_override("font_color", Color(1.0, 0.75, 0.4))
-		best.position = Vector2(64, viewport_size.y * 0.24 + 126)
-		ui.add_child(best)
+		_make_label(ui, "HI-SCORE %06d   LV %02d" % [
+					int(cfg.get_value("best", "score", 0)),
+					int(cfg.get_value("best", "level", 1)),
+				], 18, NEON_GOLD, Vector2(62, top + 140))
 
-	_prompt = Label.new()
-	_prompt.text = "tap or press any key to skate"
-	_prompt.add_theme_font_size_override("font_size", 20)
-	_prompt.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
-	_prompt.position = Vector2(64, viewport_size.y * 0.24 + 162)
-	ui.add_child(_prompt)
+	_prompt = _make_label(ui, ">> PRESS START <<", 26, Color(1, 1, 1), Vector2(62, top + 184))
+	_prompt.add_theme_color_override("font_shadow_color", NEON_PINK)
+	_prompt.add_theme_constant_override("shadow_offset_x", 3)
+	_prompt.add_theme_constant_override("shadow_offset_y", 3)
+
+	var hint := "TAP SCREEN" if _is_mobile() else "ANY KEY OR CLICK"
+	_make_label(ui, hint, 14, Color(1, 1, 1, 0.5), Vector2(62, top + 222))
+
+	_make_label(ui, "(C) 1989 CRANBOARD CO.", 14, Color(1, 1, 1, 0.4),
+			Vector2(34, viewport_size.y - 44))
 
 	# Version stamp, bottom-right, barely-there.
 	var ver := str(ProjectSettings.get_setting("application/config/version", ""))
 	if ver != "":
-		var ver_label := Label.new()
-		ver_label.text = "v" + ver
-		ver_label.add_theme_font_size_override("font_size", 14)
-		ver_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
-		ver_label.position = Vector2(viewport_size.x - 140, viewport_size.y - 32)
-		ui.add_child(ver_label)
+		_make_label(ui, "V" + ver, 14, Color(1, 1, 1, 0.4),
+				Vector2(viewport_size.x - 132, viewport_size.y - 44))
+
+
+## Double neon rule around the screen edge -- the cabinet bezel.
+func _build_bezel(ui: CanvasLayer, viewport_size: Vector2) -> void:
+	# inset px, border px, colour -- outer magenta rule, inner cyan hairline.
+	var rules: Array[Array] = [
+		[14.0, 3, Color(NEON_PINK, 0.85)],
+		[22.0, 2, Color(NEON_CYAN, 0.55)],
+	]
+	for rule in rules:
+		var inset: float = rule[0]
+		var box := StyleBoxFlat.new()
+		box.bg_color = Color(0, 0, 0, 0)
+		box.set_border_width_all(rule[1])
+		box.border_color = rule[2]
+		box.set_corner_radius_all(0)
+		var panel := Panel.new()
+		panel.add_theme_stylebox_override("panel", box)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		panel.position = Vector2(inset, inset)
+		panel.size = viewport_size - Vector2(inset, inset) * 2.0
+		ui.add_child(panel)
+
+
+## Full-screen CRT pass over everything: scanline comb, corner vignette,
+## a slow rolling refresh band, and a faint mains flicker.
+func _build_crt_overlay() -> void:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+render_mode blend_mix;
+
+uniform float line_count = 216.0;
+uniform float scan_alpha = 0.20;
+uniform float vignette_alpha = 0.55;
+uniform float flicker_alpha = 0.02;
+
+void fragment() {
+	// Every other chunky row gets dimmed -- the scanline comb.
+	float a = step(0.5, fract(UV.y * line_count)) * scan_alpha;
+
+	// Round off the corners like a glass tube.
+	vec2 d = UV - vec2(0.5);
+	a = max(a, smoothstep(0.34, 0.82, length(d) * 1.28) * vignette_alpha);
+
+	// Mains hum, always dimming a touch, never brightening.
+	a += (0.5 + 0.5 * sin(TIME * 7.0)) * flicker_alpha;
+
+	// Refresh band drifting up the tube, the one thing that lightens.
+	vec3 tint = vec3(0.02, 0.0, 0.05);
+	float band = smoothstep(0.90, 1.0, fract(UV.y - TIME * 0.06));
+	tint = mix(tint, vec3(0.55, 0.85, 1.0), band);
+	a = max(a, band * 0.07);
+
+	COLOR = vec4(tint, clamp(a, 0.0, 1.0));
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	# One scanline per rendered pixel row, so the comb lines up with the
+	# 3D viewport's own pixelation (1/3 desktop, 1/5 mobile).
+	mat.set_shader_parameter("line_count", viewport_size.y / float(viewport_frame.stretch_shrink))
+
+	var overlay := ColorRect.new()
+	overlay.material = mat
+	overlay.color = Color(1, 1, 1)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.position = Vector2.ZERO
+	overlay.size = viewport_size
+
+	var layer := CanvasLayer.new()
+	layer.layer = 10  # above the UI layer
+	layer.add_child(overlay)
+	add_child(layer)
 
 
 func _start_music() -> void:

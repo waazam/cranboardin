@@ -3,12 +3,12 @@ extends Node3D
 ## history of board positions (ImmediateMesh triangle strip, additive
 ## unshaded, vertex-colored).
 ##
-## Color follows the session score through the game's palette (cyan ->
-## pink -> gold -> cranberry -> white-hot); width and brightness swell
-## with the combo multiplier. Breaking the combo (a hit, or letting the
-## window lapse) makes the stream sputter grey and dissolve fast before
-## it regrows in the score color. Main pushes state via set_state() /
-## break_combo() alongside its HUD updates.
+## The head holds the score-tier color (cyan -> teal -> pink -> magenta
+## -> violet) and the ribbon unwinds into a scrolling neon gradient behind
+## it; width and brightness swell with the combo multiplier. Breaking the
+## combo (a hit, or letting the window lapse) makes the stream sputter
+## grey and dissolve fast before it regrows in color. Main pushes state
+## via set_state() / break_combo() alongside its HUD updates.
 
 const LIFETIME := 0.7
 const MIN_STEP := 0.15
@@ -21,10 +21,10 @@ const BREAK_GREY := Color(0.45, 0.45, 0.52)
 const TIER_SCORES := [0.0, 1000.0, 3000.0, 6000.0, 10000.0]
 const TIER_COLORS := [
 	Color(0.3, 0.95, 0.95),   # cyan
+	Color(0.25, 0.9, 0.75),   # teal
 	Color(1.0, 0.42, 0.7),    # pink
-	Color(1.0, 0.75, 0.4),    # gold
-	Color(0.95, 0.2, 0.35),   # cranberry
-	Color(1.0, 0.92, 0.98),   # white-hot
+	Color(0.95, 0.25, 0.85),  # hot magenta
+	Color(0.75, 0.35, 1.0),   # electric violet (deliberately never white)
 ]
 
 var _player: Node3D
@@ -45,9 +45,10 @@ func _ready() -> void:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.vertex_color_use_as_albedo = true
 	# Vertex colors are stored 0..1, so push the ribbon into HDR through the
-	# material's albedo multiplier instead -- the head burns past white and
-	# blooms while the tints stay authored in the palette below.
-	mat.albedo_color = Color(1.9, 1.9, 1.9)
+	# material's albedo multiplier instead. Kept moderate: enough to trip the
+	# bloom threshold, but low enough that the rainbow hues stay saturated
+	# instead of additive-blending out to flat white.
+	mat.albedo_color = Color(1.25, 1.25, 1.25)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -116,13 +117,6 @@ func _rebuild() -> void:
 		return
 
 	var head := _head_color()
-	# The tail's hue drifts toward the palette's opposite neon -- cyan heads
-	# warm toward pink, pink/gold/cranberry heads cool toward cyan -- so the
-	# ribbon reads as a gradient instead of one flat color. Grey (broken
-	# combo) stays grey.
-	var accent := head
-	if _break_timer <= 0.0:
-		accent = TIER_COLORS[1] if head.r < head.b else TIER_COLORS[0]
 	var width := 0.22 + 0.08 * (_mult - 1)
 	var head_alpha := 0.5 + 0.08 * _mult
 
@@ -132,10 +126,17 @@ func _rebuild() -> void:
 		# holds its width and the tail feathers out instead of cutting off.
 		var t: float = 1.0 - p["age"] / LIFETIME
 		var fade: float = t * t * (3.0 - 2.0 * t)
-		# Hue drift is strongest at the tail, with a slow shimmer riding
-		# down the length so the gradient feels alive rather than static.
-		var drift: float = (1.0 - t) * (0.4 + 0.12 * sin(_time * 3.0 + t * 5.0))
-		var col := head.lerp(accent, drift)
+		# Neon gradient down the ribbon: the hue ping-pongs across the
+		# palette's arc of the wheel (cyan -> blue -> purple -> magenta ->
+		# pink, never green/yellow/orange) while slowly scrolling with
+		# time. Saturation is floored so no stretch of the ribbon ever
+		# washes out to white; grey (broken combo) stays grey.
+		var col := head
+		if _break_timer <= 0.0:
+			var cycle := fposmod((1.0 - t) * 0.85 + _time * 0.25, 1.0)
+			var hue := lerpf(0.45, 0.95, absf(2.0 * cycle - 1.0))
+			var sat := maxf(lerpf(head.s, 0.9, 1.0 - t), 0.75)
+			col = Color.from_hsv(hue, sat, 1.0)
 		col.a = head_alpha * fade
 		var half: float = width * fade
 		var right: Vector3 = p["right"]

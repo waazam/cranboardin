@@ -67,9 +67,18 @@ var _sfx_jump: AudioStream
 var _sfx_finish: AudioStream
 var _sfx_pickup: AudioStream
 
+## Short READY/GO beat at the top of every run: the world is fully built
+## and visible but the player holds still, so play visibly *starts* instead
+## of the run already being mid-flight when the scene appears.
+const INTRO_READY_TIME := 0.7
+const INTRO_GO_TIME := 1.05
+var _intro_timer: float = -1.0  # < 0 = no intro running
+var _intro_label: Label
+var _entry_fade: ColorRect
+
 
 func _ready() -> void:
-	# Chunkier pixels on mobile (1/5 res vs 1/2 on desktop).
+	# Chunkier pixels on mobile (1/5 res vs 1/3 on desktop).
 	if hud.is_mobile():
 		viewport_frame.stretch_shrink = 5
 
@@ -93,8 +102,40 @@ func _ready() -> void:
 	boosts.boosted.connect(_on_boost)
 	ramps.ramped.connect(_on_ramp)
 
+	_build_intro_overlay()
 	_load_best()
 	_start_level()
+
+	# Entering from the menu's dip-to-black: fade the world in.
+	var tween := create_tween()
+	tween.tween_property(_entry_fade, "color:a", 0.0, 0.6)
+
+
+## The center READY/GO card plus the entry fade, on their own layer above
+## the HUD.
+func _build_intro_overlay() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 20
+	add_child(layer)
+
+	_entry_fade = ColorRect.new()
+	_entry_fade.color = Color(0.05, 0.02, 0.09, 1.0)
+	_entry_fade.size = get_viewport().get_visible_rect().size
+	_entry_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_entry_fade)
+
+	_intro_label = Label.new()
+	_intro_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_intro_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_intro_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_intro_label.add_theme_font_override("font", hud.retro_font())
+	_intro_label.add_theme_font_size_override("font_size", 64)
+	_intro_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	_intro_label.add_theme_color_override("font_shadow_color", Color(1.0, 0.29, 0.66))
+	_intro_label.add_theme_constant_override("shadow_offset_x", 4)
+	_intro_label.add_theme_constant_override("shadow_offset_y", 4)
+	_intro_label.visible = false
+	layer.add_child(_intro_label)
 
 
 func _start_level() -> void:
@@ -114,8 +155,25 @@ func _start_level() -> void:
 	hud.set_score(score, 1, false)
 	trail.set_state(score, 1)
 
+	# READY/GO beat: the freshly built level sits in view while the player
+	# holds still, then play visibly begins.
+	_intro_timer = 0.0
+	_intro_label.text = "READY"
+	_intro_label.visible = true
+	player.set_physics_process(false)
+	hud.running = false
+
 
 func _process(delta: float) -> void:
+	if _intro_timer >= 0.0:
+		_intro_timer += delta
+		if _intro_timer >= INTRO_GO_TIME:
+			_intro_timer = -1.0
+			_intro_label.visible = false
+			player.set_physics_process(true)
+			hud.running = true
+		elif _intro_timer >= INTRO_READY_TIME:
+			_intro_label.text = "GO!"
 	# Wind rush scales with speed (silent when stopped/dead).
 	var ratio: float = player.get_speed_ratio() if state == GameState.RUNNING else 0.0
 	_wind.volume_db = lerpf(-42.0, -13.0, ratio)
@@ -187,15 +245,20 @@ func _on_zombie_passed(kind: String) -> void:
 	_add_score(SCORE_OVER if kind == "over" else SCORE_NEAR)
 
 
-func _on_zombie_smashed() -> void:
-	_add_score(SCORE_SMASH)
+func _on_zombie_smashed(pos: Vector3) -> void:
+	var gained := _add_score(SCORE_SMASH)
+	if gained > 0:
+		zombies.popup_points(pos, "+%d" % gained, Color(0.55, 1.0, 1.0))
 	_play_sfx(_sfx_hit, 1.5)  # pitched-up crunch, distinct from taking damage
 	camera_rig.add_shake(0.15)
 	player.burst_sparks()  # cyan spray off the wheels sells the impact
 	player.extend_boost(0.35)
 	_smash_chain += 1
 	if _smash_chain % 3 == 0:
-		_add_score(SCORE_RAMPAGE)
+		var bonus := _add_score(SCORE_RAMPAGE)
+		if bonus > 0:
+			zombies.popup_points(pos + Vector3(0, 0.7, 0), "+%d" % bonus,
+					Color(0.8, 0.45, 1.0))
 		camera_rig.add_shake(0.3)
 
 
@@ -249,16 +312,20 @@ func _combo_mult() -> int:
 	return clampi(mult, 1, 5)
 
 
-func _add_score(points: int) -> void:
+## Returns the points actually gained (post-multiplier; 0 outside a run),
+## so callers can echo the amount in world-space popups.
+func _add_score(points: int) -> int:
 	if state != GameState.RUNNING:
-		return
+		return 0
 	_streak += 1
 	_combo_timer = COMBO_WINDOW
 	var before := score
-	score += points * _combo_mult()
+	var gained := points * _combo_mult()
+	score += gained
 	hud.set_score(score, _combo_mult(), true)
 	trail.set_state(score, _combo_mult())
 	_check_tier(before)
+	return gained
 
 
 ## Crossing a trail color tier gets a chime (on its own player, so event

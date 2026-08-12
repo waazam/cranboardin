@@ -14,6 +14,9 @@ extends Node3D
 ## and lengthens the run.
 
 const SAMPLE_STEP := 4.0
+## Road generated uphill behind the start line, so the world extends past
+## the camera at s=0 instead of cutting off into void.
+const BACK_EXTENT := 60.0
 
 @export var road_width: float = 14.0
 @export var slope_angle_deg: float = 9.0
@@ -22,6 +25,8 @@ const SAMPLE_STEP := 4.0
 
 var arc_length: float = 0.0
 var start_position: Vector3 = Vector3.ZERO
+## s of the first centerline sample (-BACK_EXTENT); gameplay s stays 0-based.
+var _s0: float = 0.0
 
 var _points: PackedVector3Array = PackedVector3Array()
 var _forwards: PackedVector3Array = PackedVector3Array()
@@ -61,10 +66,11 @@ func generate(level: int) -> void:
 
 ## World transform at distance s down the road, offset laterally (+ = right).
 ## basis: X = right across the road, Y = road surface normal, -Z = downhill.
+## Accepts s down to -BACK_EXTENT (the pre-start stretch behind the camera).
 func transform_at(s: float, lateral: float) -> Transform3D:
-	s = clampf(s, 0.0, arc_length)
-	var idx: int = mini(int(s / SAMPLE_STEP), _points.size() - 2)
-	var t := (s - idx * SAMPLE_STEP) / SAMPLE_STEP
+	s = clampf(s, _s0, arc_length)
+	var idx: int = mini(int((s - _s0) / SAMPLE_STEP), _points.size() - 2)
+	var t := (s - _s0 - idx * SAMPLE_STEP) / SAMPLE_STEP
 	var pos := _points[idx].lerp(_points[idx + 1], t)
 	var fwd := _forwards[idx].lerp(_forwards[idx + 1], t).normalized()
 	var side := fwd.cross(Vector3.UP).normalized()
@@ -88,11 +94,12 @@ func _build_shared_materials() -> void:
 	# Rooftop clutter: near-black, reads as silhouette against the dusk sky.
 	_roof_mat = _flat_mat(Color(0.11, 0.09, 0.17))
 
-	# Antenna beacon: tiny hot red dot -- a cheap aircraft warning light.
+	# Antenna beacon: tiny hot pink dot -- a cheap warning light, kept
+	# inside the palette.
 	_beacon_mat = StandardMaterial3D.new()
-	_beacon_mat.albedo_color = Color(1.0, 0.25, 0.3)
+	_beacon_mat.albedo_color = Color(1.0, 0.25, 0.55)
 	_beacon_mat.emission_enabled = true
-	_beacon_mat.emission = Color(1.0, 0.15, 0.25)
+	_beacon_mat.emission = Color(1.0, 0.15, 0.5)
 	_beacon_mat.emission_energy_multiplier = 3.0
 
 	# Building slab palette: all in the dark-plum family but nudged toward
@@ -116,7 +123,7 @@ func _build_shared_materials() -> void:
 	var billboard_tints: Array[Color] = [
 		Color(1.0, 0.4, 0.7),    # pink
 		Color(0.35, 0.9, 0.95),  # cyan
-		Color(1.0, 0.7, 0.35),   # amber
+		Color(0.7, 0.4, 1.0),    # electric purple
 	]
 	for tint in billboard_tints:
 		var bb := StandardMaterial3D.new()
@@ -143,8 +150,31 @@ func _build_centerline() -> void:
 	var ph1 := _rng.randf_range(0.0, TAU)
 	var ph2 := _rng.randf_range(0.0, TAU)
 
+	# Pre-start stretch: integrate the same curve backwards from s=0, so
+	# the road continues uphill behind the start line (the camera sees it
+	# at READY instead of a void). Gameplay s is unaffected; these samples
+	# live at negative s.
+	var back_count: int = int(BACK_EXTENT / SAMPLE_STEP)
+	_s0 = -back_count * SAMPLE_STEP
 	var pos := Vector3.ZERO
 	var heading := 0.0  # 0 = -Z
+	var back_points := PackedVector3Array()
+	var back_forwards := PackedVector3Array()
+	for i in range(1, back_count + 1):
+		var s_b := -i * SAMPLE_STEP
+		var curvature := amp1 * sin(TAU * s_b / wl1 + ph1) + amp2 * sin(TAU * s_b / wl2 + ph2)
+		heading -= curvature * SAMPLE_STEP
+		var h_dir := Vector3(-sin(heading), 0.0, -cos(heading))
+		var step_vec := h_dir * (SAMPLE_STEP * horiz) + Vector3(0.0, -SAMPLE_STEP * drop, 0.0)
+		pos -= step_vec
+		back_points.append(pos)
+		back_forwards.append(step_vec.normalized())
+	for i in range(back_count - 1, -1, -1):
+		_points.append(back_points[i])
+		_forwards.append(back_forwards[i])
+
+	pos = Vector3.ZERO
+	heading = 0.0
 	var sample_count: int = int(arc_length / SAMPLE_STEP) + 2
 
 	for i in sample_count:
@@ -250,7 +280,7 @@ func _sample_frame(i: int) -> Transform3D:
 func _build_dashes() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var s := 6.0
+	var s := _s0 + 6.0  # the center line runs through the pre-start stretch too
 	while s < arc_length - 10.0:
 		var xf0 := transform_at(s, 0.0)
 		var xf1 := transform_at(s + 2.6, 0.0)
@@ -309,8 +339,8 @@ func _build_scenery() -> void:
 
 	var edge := road_width * 0.5
 
-	# Streetlights: alternating sides.
-	var s := 20.0
+	# Streetlights: alternating sides, from the pre-start stretch onward.
+	var s := _s0 + 12.0
 	var light_side := 1.0
 	while s < arc_length - 15.0:
 		_add_upright(scenery, s, light_side * (edge + 1.3), -0.05,
@@ -320,7 +350,7 @@ func _build_scenery() -> void:
 
 	# Trees, bushes, and clutter on both sides.
 	for sd in [-1.0, 1.0]:
-		s = 10.0
+		s = _s0 + 8.0
 		while s < arc_length - 10.0:
 			var lat: float = sd * (edge + _rng.randf_range(2.0, 6.5))
 			var roll := _rng.randf()
@@ -342,7 +372,7 @@ func _build_scenery() -> void:
 	for i in 5:
 		window_mats.append(_make_window_material(_rng.randf_range(0.2, 0.8)))
 	for sd in [-1.0, 1.0]:
-		s = 25.0
+		s = _s0 + 15.0
 		while s < arc_length - 20.0:
 			var w := _rng.randf_range(14.0, 26.0)
 			_add_upright(scenery, s + w * 0.5,
@@ -418,10 +448,12 @@ func _make_tree() -> Node3D:
 	trunk_mesh.height = trunk_h
 	trunk.mesh = trunk_mesh
 	trunk.position = Vector3(0, trunk_h * 0.5, 0)
-	trunk.material_override = _flat_mat(Color(0.35, 0.27, 0.2))
+	trunk.material_override = _flat_mat(Color(0.32, 0.22, 0.34))  # plum-dark bark
 	item.add_child(trunk)
 
-	var green := Color(0.12, 0.34 + _rng.randf_range(0.0, 0.08), 0.3)
+	# Dusk-teal foliage -- the palette has no green, so the trees read as
+	# cool teal silhouettes against the pink sky instead.
+	var foliage := Color(0.08, 0.3 + _rng.randf_range(0.0, 0.08), 0.42)
 	var radius := _rng.randf_range(0.8, 1.2)
 	var y := trunk_h + radius * 0.6
 	for layer in 2:
@@ -431,7 +463,7 @@ func _make_tree() -> Node3D:
 		ball.height = radius * 1.8
 		leaves.mesh = ball
 		leaves.position = Vector3(_rng.randf_range(-0.2, 0.2), y, _rng.randf_range(-0.2, 0.2))
-		leaves.material_override = _flat_mat(green.lightened(layer * 0.08))
+		leaves.material_override = _flat_mat(foliage.lightened(layer * 0.08))
 		item.add_child(leaves)
 		y += radius * 0.7
 		radius *= 0.7
@@ -447,7 +479,7 @@ func _make_bush() -> Node3D:
 	ball.height = size
 	bush.mesh = ball
 	bush.position = Vector3(0, size * 0.42, 0)
-	bush.material_override = _flat_mat(Color(0.14, 0.36, 0.3))
+	bush.material_override = _flat_mat(Color(0.3, 0.2, 0.42))
 	item.add_child(bush)
 	return item
 
@@ -586,14 +618,16 @@ func _make_window_material(warm_bias: float) -> StandardMaterial3D:
 	var glow := Image.create_empty(w, h, false, Image.FORMAT_RGBA8)
 	var facade := Color(0.17, 0.13, 0.28, 1.0)
 	var glass := Color(0.28, 0.24, 0.42, 1.0)
+	# "Warm" rooms glow pink/rose, "cool" ones cyan/violet -- both halves of
+	# the strict cyan/pink/teal/purple palette, no amber.
 	var warm: Array[Color] = [
-		Color(1.0, 0.75, 0.4, 1.0),   # office amber
-		Color(1.0, 0.55, 0.35, 1.0),  # tungsten
+		Color(1.0, 0.5, 0.7, 1.0),    # warm pink
+		Color(1.0, 0.4, 0.55, 1.0),   # rose
 	]
 	var cool: Array[Color] = [
 		Color(0.4, 0.9, 0.95, 1.0),   # cyan
 		Color(0.55, 0.5, 1.0, 1.0),   # violet
-		Color(1.0, 0.4, 0.75, 1.0),   # pink
+		Color(0.3, 0.85, 0.75, 1.0),  # teal
 	]
 
 	img.fill(facade)

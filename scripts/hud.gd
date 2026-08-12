@@ -29,8 +29,9 @@ var level_label: Label
 var score_label: Label
 var combo_label: Label
 var _score_flash: float = 0.0
-var hp_bar_bg: ColorRect
-var hp_bar_fill: ColorRect
+## Health as three chunky dots: teal while safe, all hot pink on the last
+## hit, dark sockets when spent.
+var hp_dots: Array[ColorRect] = []
 var progress_bg: ColorRect
 var progress_fill: ColorRect
 var hint_label: Label
@@ -40,12 +41,34 @@ var results_label: Label
 var elapsed_time: float = 0.0
 var running: bool = true
 var _hint_timer: float = 4.0
+var _font: SystemFont
 
 
 func _ready() -> void:
+	_font = retro_font()
 	_build_ui()
 	if is_mobile() or force_touch_controls:
 		_build_touch_controls()
+
+
+## Bitmap-ish text, same recipe as the menu: a monospace system face with
+## every smoothing feature off so glyph edges land on hard pixel
+## boundaries. Web has no system fonts, so the theme fallback keeps it
+## legible there and merely loses the crisp aliased edges.
+static func retro_font() -> SystemFont:
+	var font := SystemFont.new()
+	font.font_names = PackedStringArray([
+		"Press Start 2P", "Consolas", "Courier New", "monospace",
+	])
+	font.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	font.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
+	font.hinting = TextServer.HINTING_NONE
+	font.multichannel_signed_distance_field = false
+	var fallbacks: Array[Font] = []
+	if ThemeDB.fallback_font:
+		fallbacks.append(ThemeDB.fallback_font)
+	font.fallbacks = fallbacks
+	return font
 
 
 static func is_mobile() -> bool:
@@ -61,15 +84,15 @@ func _build_ui() -> void:
 	stats_box.add_theme_constant_override("separation", 4)
 	add_child(stats_box)
 
-	speed_label = _make_label("Speed: 0", 22, Color(1, 1, 1))
+	speed_label = _make_label("SPEED: 0", 22, Color(1, 1, 1))
 	stats_box.add_child(speed_label)
-	timer_label = _make_label("Time: 0.0", 18, Color(0.9, 0.9, 0.9))
+	timer_label = _make_label("TIME: 0.0", 18, Color(0.9, 0.9, 0.9))
 	stats_box.add_child(timer_label)
-	level_label = _make_label("Level 1", 18, Color(0.5, 0.92, 0.95))
+	level_label = _make_label("LEVEL 1", 18, Color(0.5, 0.92, 0.95))
 	stats_box.add_child(level_label)
 
 	# Score readout top-right; combo multiplier beneath it in accent pink.
-	score_label = _make_label("Score: 0", 22, Color(1, 1, 1))
+	score_label = _make_label("SCORE: 0", 22, Color(1, 1, 1))
 	score_label.size = Vector2(220, 30)
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	score_label.position = Vector2(viewport_size.x - 240, 16)
@@ -86,16 +109,13 @@ func _build_ui() -> void:
 	hp_caption.position = Vector2(20, 102)
 	add_child(hp_caption)
 
-	hp_bar_bg = ColorRect.new()
-	hp_bar_bg.color = Color(0, 0, 0, 0.45)
-	hp_bar_bg.size = Vector2(180, 14)
-	hp_bar_bg.position = Vector2(48, 104)
-	add_child(hp_bar_bg)
-
-	hp_bar_fill = ColorRect.new()
-	hp_bar_fill.color = Color(0.45, 0.75, 0.4)
-	hp_bar_fill.size = Vector2(180, 14)
-	hp_bar_bg.add_child(hp_bar_fill)
+	for i in 3:
+		var dot := ColorRect.new()
+		dot.color = Color(0.3, 0.9, 0.85)
+		dot.size = Vector2(16, 16)
+		dot.position = Vector2(48 + i * 26, 102)
+		add_child(dot)
+		hp_dots.append(dot)
 
 	var bar_width := 320.0
 	var bar_height := 16.0
@@ -110,13 +130,13 @@ func _build_ui() -> void:
 	progress_fill.size = Vector2(0, bar_height)
 	progress_bg.add_child(progress_fill)
 
-	var progress_caption := _make_label("HILL PROGRESS", 12, Color(1, 1, 1, 0.8))
+	var progress_caption := _make_label("PROGRESS", 12, Color(1, 1, 1, 0.8))
 	progress_caption.position = Vector2((viewport_size.x - bar_width) * 0.5, 4)
 	add_child(progress_caption)
 
-	var hint_text := "WASD steer / accelerate / brake   -   SPACE jump over zombies   -   R restart"
+	var hint_text := "WASD STEER / ACCELERATE / BRAKE   -   SPACE JUMP   -   R RESTART"
 	if is_mobile() or force_touch_controls:
-		hint_text = "Use the arrows   -   JUMP over zombies"
+		hint_text = "USE THE ARROWS   -   JUMP OVER ZOMBIES"
 	hint_label = _make_label(hint_text, 16, Color(1, 1, 1, 0.85))
 	hint_label.position = Vector2(viewport_size.x * 0.5 - 300, viewport_size.y - 40)
 	add_child(hint_label)
@@ -259,8 +279,14 @@ func _in_arrow(kind: String, fx: float, fy: float) -> bool:
 func _make_label(text: String, size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.text = text
+	label.add_theme_font_override("font", _font)
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", color)
+	# Hard black drop shadow, scaled with the type size -- the same chunky
+	# arcade weight as the menu text.
+	label.add_theme_color_override("font_shadow_color", Color(0.05, 0.02, 0.09, 0.9))
+	label.add_theme_constant_override("shadow_offset_x", maxi(2, size / 9))
+	label.add_theme_constant_override("shadow_offset_y", maxi(2, size / 9))
 	return label
 
 
@@ -269,17 +295,19 @@ func _process(delta: float) -> void:
 		elapsed_time += delta
 
 	if player:
-		speed_label.text = "Speed: %d" % int(player.current_speed * 3.6)
+		speed_label.text = "SPEED: %d" % int(player.current_speed * 3.6)
 		progress_fill.size.x = progress_bg.size.x * player.get_progress()
-		var hp_ratio: float = float(player.health) / float(player.max_health)
-		hp_bar_fill.size.x = hp_bar_bg.size.x * minf(hp_ratio, 1.0)
-		if hp_ratio > 1.0:
-			# Overhealed on cranberry juice: the bar goes full cranberry.
-			hp_bar_fill.color = Color(0.62, 0.12, 0.28)
-		else:
-			hp_bar_fill.color = Color(0.45, 0.75, 0.4).lerp(Color(0.85, 0.3, 0.25), 1.0 - hp_ratio)
+		# Three hit dots: teal while safe, all hot pink on the last hit,
+		# dark sockets once spent.
+		var hits := clampi(player.health, 0, hp_dots.size())
+		for i in hp_dots.size():
+			if i < hits:
+				hp_dots[i].color = Color(1.0, 0.25, 0.55) if hits == 1 \
+						else Color(0.3, 0.9, 0.85)
+			else:
+				hp_dots[i].color = Color(0, 0, 0, 0.45)
 
-	timer_label.text = "Time: %.1f" % elapsed_time
+	timer_label.text = "TIME: %.1f" % elapsed_time
 
 	# Brief pink flash on the score label whenever points land.
 	if _score_flash > 0.0:
@@ -296,7 +324,7 @@ func _process(delta: float) -> void:
 
 ## Called by Main whenever the score or combo changes; flash on gains.
 func set_score(total: int, mult: int, flash: bool) -> void:
-	score_label.text = "Score: %d" % total
+	score_label.text = "SCORE: %d" % total
 	combo_label.visible = mult > 1
 	combo_label.text = "COMBO x%d" % mult
 	if flash:
@@ -306,19 +334,19 @@ func set_score(total: int, mult: int, flash: bool) -> void:
 func show_level_complete(level: int, time: float, top_speed: float, score: int,
 		prev_best: float, is_record: bool) -> void:
 	running = false
-	var time_line := "Time: %.1fs" % time
+	var time_line := "TIME: %.1fS" % time
 	if is_record and prev_best > 0.0:
 		time_line += "  NEW RECORD!"
 	elif prev_best > 0.0:
-		time_line += "  (best %.1fs)" % prev_best
-	results_label.text = "LEVEL %d COMPLETE!\n\n%s\nTop Speed: %d\nScore: %d\n\nPress R for level %d" \
+		time_line += "  (BEST %.1fS)" % prev_best
+	results_label.text = "LEVEL %d COMPLETE!\n\n%s\nTOP SPEED: %d\nSCORE: %d\n\nPRESS R FOR LEVEL %d" \
 			% [level, time_line, int(top_speed * 3.6), score, level + 1]
 	results_layer.visible = true
 
 
 func show_game_over(level: int, score: int) -> void:
 	running = false
-	results_label.text = "GAME OVER\n\nThe horde got you on level %d.\nScore: %d\n\nPress R to try again" \
+	results_label.text = "GAME OVER\n\nTHE HORDE GOT YOU ON LEVEL %d\nSCORE: %d\n\nPRESS R TO TRY AGAIN" \
 			% [level, score]
 	results_layer.visible = true
 
@@ -330,4 +358,4 @@ func reset(level: int) -> void:
 	_hint_timer = 4.0
 	hint_label.visible = true
 	hint_label.modulate.a = 1.0
-	level_label.text = "Level %d" % level
+	level_label.text = "LEVEL %d" % level

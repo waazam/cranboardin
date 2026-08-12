@@ -30,8 +30,9 @@ enum RunState { RUNNING, DEAD, FINISHED }
 @export var steer_response: float = 34.0
 @export var jump_velocity: float = 8.5
 @export var gravity: float = 22.0
-@export var max_health: int = 100
-@export var overheal_cap: int = 150
+# Health is whole hits: three and the run ends. Bottles restore one.
+@export var max_health: int = 3
+@export var overheal_cap: int = 3
 @export var hit_speed_multiplier: float = 0.45
 @export var invulnerable_duration: float = 1.3
 @export var coyote_time: float = 0.12
@@ -44,7 +45,7 @@ var height: float = 0.0
 var _vertical_velocity: float = 0.0
 
 var current_speed: float = 0.0
-var health: int = 100
+var health: int = 3
 var top_speed: float = 0.0
 var elapsed: float = 0.0
 var run_state: RunState = RunState.RUNNING
@@ -354,7 +355,8 @@ func _update_lean(steer_input: float, delta: float) -> void:
 	_lean_amount = lerpf(_lean_amount, steer_input, 10.0 * delta)
 	skateboard.set_carve(-_lean_amount * 0.22)
 	character.set_lean(_lean_amount * 0.45)
-	var target_pitch := -0.1 - get_speed_ratio() * 0.15
+	# Kept shallow so the upright riding stance stays upright at speed.
+	var target_pitch := -0.04 - get_speed_ratio() * 0.06
 	visuals.rotation.x = lerp_angle(visuals.rotation.x, target_pitch, 6.0 * delta)
 
 
@@ -415,12 +417,12 @@ func is_boosting() -> bool:
 	return _boost_timer > 0.0
 
 
-## Called by cranberry bottle pickups. Heals to max; if already at or
-## above max, overheals up to overheal_cap.
+## Called by cranberry bottle pickups: restores hits up to the cap.
 func heal(amount: int) -> void:
 	if run_state != RunState.RUNNING:
 		return
 	health = mini(health + amount, overheal_cap)
+	character.set_danger(health == 1)
 
 
 ## Called by zombies on contact.
@@ -436,6 +438,7 @@ func take_damage(amount: int) -> void:
 	if health <= 0:
 		_die()
 	else:
+		character.set_danger(health == 1)
 		character.play_crash()
 		damaged.emit(health)
 
@@ -444,6 +447,7 @@ func _die() -> void:
 	run_state = RunState.DEAD
 	visuals.visible = true
 	character.set_lean(0.0)
+	character.set_danger(false)
 	character.play_death()
 	damaged.emit(0)
 	died.emit()

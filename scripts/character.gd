@@ -7,7 +7,7 @@ class_name Character
 ## rider animation stay independent.
 ##
 ## Animation mapping:
-##   grounded        -> Crouch_Idle (loops; reads as a skating tuck)
+##   grounded        -> Idle (loops; an upright, casual riding stance)
 ##   airborne        -> Jump_Start (one-shot; holds its final pose if the
 ##                      air time outlasts the clip -- safer than the "Jump"
 ##                      loop, whose full cycle we can't preview headlessly)
@@ -26,12 +26,21 @@ const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
 ## whose body is sideways but slightly open toward where they're going.
 @export var stance_angle_deg: float = 90.0
 
+const DANGER_PINK := Color(1.0, 0.25, 0.55)
+
 var _model: Node3D
 var _anim: AnimationPlayer
 var _lean_modifier: LeanModifier
 var _current: StringName = &""
 ## While true (crash/finish/death anims), update_motion() is ignored.
 var _locked: bool = false
+
+## Last-hit warning: while on, the whole rider hard-blinks hot pink.
+var _danger: bool = false
+var _blink_time: float = 0.0
+var _blink_pink: bool = false
+var _mats: Array[BaseMaterial3D] = []
+var _mat_colors: Array[Color] = []  # each mat's normal neon, parallel to _mats
 
 
 func _ready() -> void:
@@ -46,8 +55,12 @@ func _ready() -> void:
 
 	# The glTF ships fully rough, which goes matte-flat under the low pink
 	# sun; a one-time material pass gives the clothing a slight sheen so the
-	# dusk light actually models the rider. Colors stay untouched.
-	_tune_materials(_model)
+	# dusk light actually models the rider, and recolors him into the game's
+	# neon palette (cyan body panels, hot pink joints). The tuned materials
+	# are kept so the danger blink can repaint them.
+	_mats = apply_neon_materials(_model)
+	for mat in _mats:
+		_mat_colors.append(mat.albedo_color)
 
 	_anim = _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	assert(_anim != null, "AnimationLibrary GLB is missing its AnimationPlayer")
@@ -62,7 +75,7 @@ func _ready() -> void:
 		_lean_modifier.axis = Vector3(sin(model_yaw), 0.0, -cos(model_yaw))
 		skeleton.add_child(_lean_modifier)
 
-	_play(&"Crouch_Idle", 0.0)
+	_play(&"Idle", 0.0)
 
 
 ## Called by Player every physics tick with the post-move floor state.
@@ -70,7 +83,7 @@ func update_motion(grounded: bool) -> void:
 	if _locked:
 		return
 	if grounded:
-		_play(&"Crouch_Idle", 0.25)
+		_play(&"Idle", 0.25)
 	elif _current != &"Jump_Start":
 		_play(&"Jump_Start", 0.15)
 
@@ -102,15 +115,20 @@ func set_lean(lean: float) -> void:
 func reset() -> void:
 	_locked = false
 	set_lean(0.0)
-	_play(&"Crouch_Idle", 0.0)
+	set_danger(false)
+	_play(&"Idle", 0.0)
 
 
 ## Duplicate each unique surface material once (surfaces that shared a
 ## material keep sharing the tuned copy) and soften it: roughness pulled
 ## down so the sun reads on cloth and skin, plus a faint sky-tinted rim so
-## the rider's silhouette catches the dusk from behind. Overrides live on
-## this instance only, so zombies wearing the same GLB are unaffected.
-func _tune_materials(model: Node3D) -> void:
+## the rider's silhouette catches the dusk from behind. The mannequin's two
+## surfaces get the neon treatment -- M_Main (body panels) goes neon cyan,
+## M_Joints goes hot pink -- with a soft self-glow so the rider pops
+## against the dusk like the rest of the game's neon. Overrides live on
+## the given instance only. Static so the menu can dress its rider the
+## same way.
+static func apply_neon_materials(model: Node3D) -> Array[BaseMaterial3D]:
 	var tuned := {}  # source material -> tuned copy
 	for child in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh_instance := child as MeshInstance3D
@@ -126,8 +144,47 @@ func _tune_materials(model: Node3D) -> void:
 				mat.rim_enabled = true
 				mat.rim = 0.25
 				mat.rim_tint = 0.7
+				var neon := Color(0.36, 0.95, 0.98) if src.resource_name == "M_Main" \
+						else Color(1.0, 0.29, 0.66)
+				mat.albedo_color = neon
+				mat.emission_enabled = true
+				mat.emission = neon
+				mat.emission_energy_multiplier = 0.35
 				tuned[src] = mat
 			mesh_instance.set_surface_override_material(surface, tuned[src])
+	var mats: Array[BaseMaterial3D] = []
+	mats.assign(tuned.values())
+	return mats
+
+
+## Last-hit warning toggle, driven by Player as health changes.
+func set_danger(on: bool) -> void:
+	if _danger == on:
+		return
+	_danger = on
+	_blink_time = 0.0
+	if not on:
+		_paint(false)
+
+
+func _process(delta: float) -> void:
+	if not _danger:
+		return
+	_blink_time += delta
+	var pink := fmod(_blink_time, 0.36) < 0.18
+	if pink != _blink_pink:
+		_paint(pink)
+
+
+## Repaints every tuned material either hot pink (energy pushed so the
+## blink blooms) or back to its normal neon.
+func _paint(pink: bool) -> void:
+	_blink_pink = pink
+	for i in _mats.size():
+		var col := DANGER_PINK if pink else _mat_colors[i]
+		_mats[i].albedo_color = col
+		_mats[i].emission = col
+		_mats[i].emission_energy_multiplier = 1.2 if pink else 0.35
 
 
 func _play(anim: StringName, blend: float) -> void:

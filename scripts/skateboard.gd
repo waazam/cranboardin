@@ -7,7 +7,7 @@ class_name Skateboard
 ## Call `update_roll(speed, delta)` each physics tick to spin the wheels
 ## in proportion to actual ground speed.
 
-@export var deck_color := Color(0.1, 0.1, 0.12)
+@export var deck_color := Color(1.0, 0.29, 0.66)  # hot pink, matching the underglow
 @export var wheel_color := Color(0.88, 0.86, 0.78)
 
 # Proportioned to the rider (the ~1.65m mannequin in character.gd), matching
@@ -74,13 +74,15 @@ func _build() -> void:
 		tail.material_override = deck_mat
 		add_child(tail)
 
-	# Grip tape: near-black thin sheet on top of the deck.
+	# Grip tape: thin sheet on top of the deck. Deep pink rather than the
+	# usual black -- the camera mostly sees the board from above, so this is
+	# what actually sells the pink deck.
 	var grip := MeshInstance3D.new()
 	var grip_mesh := BoxMesh.new()
 	grip_mesh.size = Vector3(0.24, 0.006, 0.8)
 	grip.mesh = grip_mesh
 	grip.position = Vector3(0, DECK_TOP_HEIGHT + 0.004, 0)
-	var grip_mat := _flat_material(Color(0.05, 0.05, 0.06))
+	var grip_mat := _flat_material(Color(0.62, 0.14, 0.36))
 	grip_mat.roughness = 1.0
 	grip.material_override = grip_mat
 	add_child(grip)

@@ -8,7 +8,7 @@ const PICKUP_S_RANGE := 1.1
 const PICKUP_LATERAL_RANGE := 1.0
 const PICKUP_MAX_HEIGHT := 1.6  # grabbable even mid-jump
 
-@export var heal_amount: int = 30
+@export var heal_amount: int = 1  # one hit back per bottle
 @export var base_count: int = 9
 @export var count_per_level: int = 2
 
@@ -42,7 +42,7 @@ func _ready() -> void:
 
 	# Cap: polished gold, catching the dusk sun.
 	_cap_mat = StandardMaterial3D.new()
-	_cap_mat.albedo_color = Color(0.78, 0.65, 0.35)
+	_cap_mat.albedo_color = Color(0.72, 0.73, 0.78)  # silver, palette-neutral
 	_cap_mat.metallic = 0.9
 	_cap_mat.roughness = 0.25
 

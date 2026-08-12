@@ -14,7 +14,7 @@ const BIRD_SCRIPT := preload("res://scripts/bird.gd")
 @export var sky_top_color := Color(0.18, 0.08, 0.32)
 @export var sky_horizon_color := Color(0.95, 0.42, 0.48)
 @export var building_color := Color(0.16, 0.12, 0.28)
-@export var window_color := Color(1.0, 0.75, 0.4)
+@export var window_color := Color(1.0, 0.55, 0.75)  # pink, palette-strict
 ## Distance from the road to the near skyline layer. Kept well beyond the
 ## roadside building slabs (which line the road out to ~40m and fade into
 ## fog past ~150m) so the backdrop never slices through them.
@@ -117,13 +117,14 @@ func _setup_environment() -> void:
 	env.set_glow_level(5, 0.0)
 	env.set_glow_level(6, 0.0)
 
-	# Gentle SSAO grounds the props against the road -- cheap in Forward+.
-	# Low radius/intensity so contact shadows appear without dirtying the
-	# clean flat-shaded look.
-	env.ssao_enabled = true
-	env.ssao_radius = 1.0
-	env.ssao_intensity = 1.2
-	env.ssao_detail = 0.3
+	# Gentle SSAO grounds the props against the road -- cheap in Forward+,
+	# but skipped on the web build (the GL Compatibility renderer ignores it
+	# anyway, and the flat billboard look doesn't miss it).
+	if not OS.has_feature("web"):
+		env.ssao_enabled = true
+		env.ssao_radius = 1.0
+		env.ssao_intensity = 1.2
+		env.ssao_detail = 0.3
 
 	# Depth fog glues road, scenery, and skyline into one atmosphere;
 	# tinted pink-purple for the neon dusk.
@@ -150,7 +151,10 @@ func _setup_environment() -> void:
 	sun.rotation_degrees = Vector3(-38, -30, 0)
 	sun.light_color = Color(1.0, 0.64, 0.52)
 	sun.light_energy = 0.9
-	sun.shadow_enabled = true
+	# Shadow maps redraw the whole scene per split -- the single biggest GL
+	# cost on the web build, and at 1/4-res pixelation with billboard sprites
+	# they barely read. Web skips them.
+	sun.shadow_enabled = not OS.has_feature("web")
 	sun.shadow_blur = 1.8
 	sun.shadow_opacity = 0.7
 	# Two splits are plenty at this draw distance and cheaper than the
@@ -305,11 +309,11 @@ func _build_stars() -> void:
 	mm.mesh = mesh
 	mm.instance_count = STAR_COUNT
 
-	# Faint dusk-star tints: mostly warm white, a scattering of cyan and
-	# pink to echo the neon palette.
+	# Faint dusk-star tints: lavender-white base with cyan and pink
+	# scattered through, echoing the strict neon palette.
 	var tints: Array[Color] = [
-		Color(1.0, 0.96, 0.9),
-		Color(1.0, 0.96, 0.9),
+		Color(0.94, 0.9, 1.0),
+		Color(0.94, 0.9, 1.0),
 		Color(0.75, 0.95, 1.0),
 		Color(1.0, 0.8, 0.92),
 	]

@@ -1,8 +1,9 @@
 extends Node3D
 ## Spawns and drives the zombie horde. A spawn plan is laid out along the
 ## track at level start; zombies only get instantiated once the player is
-## within activation range (skinned mannequins are too heavy to keep a
-## whole level's worth alive), and are freed once passed.
+## within activation range, and are freed once passed. Each zombie is a
+## single pixel-art billboard sprite (see pixel_sprites.gd) -- one quad per
+## zombie, so the horde stays cheap even on the web build.
 ##
 ## Zombies live in the same spline space as the player (s, lateral) and
 ## hunt the player's lane -- dodging them is the core game, and they can
@@ -30,11 +31,10 @@ extends Node3D
 ##   AHEAD -- lurks on the road ahead and closes on the player's lateral.
 
 signal zombie_passed(kind: String)  # "over" = cleared airborne, "near" = grazed
-signal zombie_smashed()  # bowled through while boosting
+signal zombie_smashed(pos: Vector3)  # bowled through while boosting
 
 enum SpawnType { SIDE, AHEAD }
 
-const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
 const ACTIVATION_RANGE := 150.0
 const DESPAWN_BEHIND := 14.0
 const HIT_S_RANGE := 1.0
@@ -66,7 +66,7 @@ const MAX_LATERAL_SPEED := 10.0
 ## playable road: at least one edge lane (or a jump) always escapes.
 const PACK_SPREAD := 1.2
 
-@export var damage_per_hit: int = 34  # three hits without healing ends the run
+@export var damage_per_hit: int = 1  # health is 3 hits; each contact costs one
 @export var base_count: int = 78
 @export var count_per_level: int = 24
 
@@ -79,73 +79,35 @@ var _active: Array[Dictionary] = []
 ## Shared clock for the shambler weave -- each zombie's plan-time phase
 ## offsets into it, so one accumulator serves the whole horde.
 var _weave_time: float = 0.0
-## Zombies mid-launch after a boost smash: {node, vel, spin, t}.
+## Zombies mid-launch after a boost smash: {node, vel, t}.
 var _smashed: Array[Dictionary] = []
-## Small shared palettes rather than per-instance materials: however big the
-## horde gets, the renderer only ever sees a handful of material states.
-var _zombie_materials: Array[StandardMaterial3D] = []
-var _runner_materials: Array[StandardMaterial3D] = []
-## Eye dots: one tiny shared mesh + one shared material per zombie class.
-var _eye_mesh: SphereMesh
-var _eye_material: StandardMaterial3D
-var _runner_eye_material: StandardMaterial3D
+## Floating score popups over smashed zombies: {node, t}.
+var _popups: Array[Dictionary] = []
+const POPUP_LIFETIME := 0.8
+## Small shared SpriteFrames pools rather than per-instance art: however big
+## the horde gets, only a handful of tiny textures ever exist. Everything
+## stays inside the game's strict cyan/pink/teal/purple palette: shamblers
+## in the cool half (cyan/teal/purple) with hot pink eyes, runners in the
+## hot half (magenta/pink) with cyan eyes so danger still reads at a
+## distance.
+var _shambler_frames: Array[SpriteFrames] = []
+var _runner_frames: Array[SpriteFrames] = []
 
 
 func _ready() -> void:
-	# Shamblers: sickly greens with a bruised purple thrown in, so the horde
-	# has per-zombie variety while every tint stays a shared material.
 	for tint: Color in [
-		Color(0.45, 0.56, 0.36),  # classic sickly green
-		Color(0.36, 0.5, 0.42),   # colder, mossier green
-		Color(0.44, 0.36, 0.5),   # bruised purple
+		Color(0.2, 0.85, 0.75),   # neon teal
+		Color(0.3, 0.8, 0.95),    # glacier cyan
+		Color(0.7, 0.35, 1.0),    # electric purple
+		Color(0.6, 0.55, 0.95),   # dusk lavender
 	]:
-		_zombie_materials.append(_corpse_material(tint))
+		_shambler_frames.append(PixelSprites.zombie_frames(tint, Color(1.0, 0.3, 0.65)))
 
-	# Runners: rusty reds so they read as danger at a distance.
 	for tint: Color in [
-		Color(0.62, 0.28, 0.2),   # rust
-		Color(0.54, 0.2, 0.28),   # dried-blood maroon
+		Color(0.95, 0.3, 0.85),   # hot magenta
+		Color(1.0, 0.25, 0.55),   # hot pink
 	]:
-		_runner_materials.append(_corpse_material(tint))
-
-	# Eyes: a low-poly pinhead sphere, unshaded and hot so it blooms.
-	# Shamblers get a sickly ghoul-green stare; runners burn hot orange.
-	_eye_mesh = SphereMesh.new()
-	_eye_mesh.radius = 0.028
-	_eye_mesh.height = 0.056
-	_eye_mesh.radial_segments = 6
-	_eye_mesh.rings = 3
-	_eye_material = _eye_glow(Color(0.65, 1.0, 0.4))
-	_runner_eye_material = _eye_glow(Color(1.0, 0.4, 0.14))
-
-
-## Dead-flesh material with a dusk backlight baked in: a touch of rim so the
-## silhouette catches the pink sky from behind, slightly-below-full roughness
-## so the sun still models the body, and a whisper of self-emission so the
-## horde never goes pitch black between the street lamps.
-func _corpse_material(tint: Color) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = tint
-	mat.roughness = 0.9
-	mat.rim_enabled = true
-	mat.rim = 0.4
-	mat.rim_tint = 0.5
-	mat.emission_enabled = true
-	mat.emission = tint
-	mat.emission_energy_multiplier = 0.12
-	return mat
-
-
-## Hot emissive dot for the eyes. Deliberately shaded, not unshaded --
-## Godot discards EMISSION on unshaded materials, and it's the 3.0-energy
-## emission that makes the dots burn bright enough to catch the glow pass.
-func _eye_glow(color: Color) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.emission_enabled = true
-	mat.emission = color
-	mat.emission_energy_multiplier = 3.0
-	return mat
+		_runner_frames.append(PixelSprites.zombie_frames(tint, Color(0.55, 1.0, 1.0)))
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -157,6 +119,9 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	for sm in _smashed:
 		(sm["node"] as Node3D).queue_free()
 	_smashed.clear()
+	for p in _popups:
+		(p["node"] as Node3D).queue_free()
+	_popups.clear()
 	_next_spawn = 0
 	_weave_time = 0.0  # same seed, same weave: replays stay identical
 
@@ -252,7 +217,7 @@ func _physics_process(delta: float) -> void:
 					if z["lunge_t"] <= 0.0:
 						z["lunge_state"] = 2
 						z["lunge_t"] = LUNGE_DURATION
-						var anim := z["anim"] as AnimationPlayer
+						var anim := z["anim"] as AnimatedSprite3D
 						if anim:
 							anim.speed_scale = z["anim_speed"] * 1.7
 				2:  # lunge: fast, but never faster than the player can steer
@@ -261,7 +226,7 @@ func _physics_process(delta: float) -> void:
 					if z["lunge_t"] <= 0.0:
 						z["lunge_state"] = 0
 						z["lunge_t"] = LUNGE_COOLDOWN
-						var anim := z["anim"] as AnimationPlayer
+						var anim := z["anim"] as AnimatedSprite3D
 						if anim:
 							anim.speed_scale = z["anim_speed"]
 
@@ -287,10 +252,7 @@ func _physics_process(delta: float) -> void:
 
 		var xf: Transform3D = _track.transform_at(zs, zlat)
 		var node := z["node"] as Node3D
-		node.position = xf.origin
-		# Face the player (horizontal yaw only; glTF models face +Z).
-		var to_player: Vector3 = _player.global_position - xf.origin
-		node.rotation.y = atan2(to_player.x, to_player.z)
+		node.position = xf.origin  # billboard sprite faces the camera on its own
 
 		# Contact damage -- unless the player is airborne over them.
 		if player_running \
@@ -301,7 +263,7 @@ func _physics_process(delta: float) -> void:
 				# Boosting bowls straight through: launch it, no damage.
 				_launch(z, xf)
 				_active.remove_at(i)
-				zombie_smashed.emit()
+				zombie_smashed.emit(xf.origin)
 				i -= 1
 				continue
 			z["scored"] = true  # no style points off the zombie that got you
@@ -325,16 +287,52 @@ func _physics_process(delta: float) -> void:
 		i -= 1
 
 	_update_smashed(delta)
+	_update_popups(delta)
 
 
-## Ragdoll-ish arc for smashed zombies: up, aside, and down-road, spinning.
+## Small floating "+points" text above a smashed zombie. Main calls this
+## with the final (combo-multiplied) amount right after the smash scores.
+func popup_points(pos: Vector3, text: String, color: Color) -> void:
+	var label := Label3D.new()
+	label.text = text
+	label.font_size = 42
+	label.outline_size = 10
+	label.pixel_size = 0.02
+	label.modulate = color
+	label.outline_modulate = Color(0.05, 0.02, 0.09)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true  # never swallowed by the launched body
+	label.position = pos + Vector3(0, 2.0, 0)
+	add_child(label)
+	_popups.append({"node": label, "t": 0.0})
+
+
+func _update_popups(delta: float) -> void:
+	var j := _popups.size() - 1
+	while j >= 0:
+		var p := _popups[j]
+		p["t"] += delta
+		var label := p["node"] as Label3D
+		label.position.y += 1.6 * delta  # drift up as it fades
+		var fade: float = 1.0 - p["t"] / POPUP_LIFETIME
+		label.modulate.a = clampf(fade, 0.0, 1.0)
+		if p["t"] >= POPUP_LIFETIME:
+			label.queue_free()
+			_popups.remove_at(j)
+		j -= 1
+
+
+## Ragdoll-ish arc for smashed zombies: up, aside, and down-road -- flipped
+## upside down mid-flight, the classic 2D "launched" read.
 func _launch(z: Dictionary, xf: Transform3D) -> void:
 	var side := 1.0 if _rng.randf() < 0.5 else -1.0
+	var sprite := z["anim"] as AnimatedSprite3D
+	if sprite:
+		sprite.flip_v = true
 	_smashed.append({
 		"node": z["node"],
 		"vel": xf.basis.y * 7.0 + xf.basis.x * side * 4.0 \
 				- xf.basis.z * _player.current_speed * 0.5,
-		"spin": Vector3(_rng.randf_range(4.0, 9.0), _rng.randf_range(-6.0, 6.0), 0.0),
 		"t": 0.0,
 	})
 
@@ -347,7 +345,6 @@ func _update_smashed(delta: float) -> void:
 		sm["vel"] += Vector3.DOWN * 20.0 * delta
 		var node := sm["node"] as Node3D
 		node.position += sm["vel"] * delta
-		node.rotation += sm["spin"] * delta
 		if sm["t"] > 1.3:
 			node.queue_free()
 			_smashed.remove_at(j)
@@ -358,41 +355,21 @@ func _activate(spawn: Dictionary) -> void:
 	var node := Node3D.new()
 	add_child(node)
 
-	var model := MODEL_SCENE.instantiate() as Node3D
-	model.scale = Vector3.ONE * 0.95
-	node.add_child(model)
-
-	# Tint every mesh in the rig from the shared palette: sickly greens and
-	# purples for shamblers, rusty reds for runners.
+	# One billboard sprite from the shared tinted pools: sickly greens and
+	# purples for shamblers, rusty reds for runners. Eyes are baked hot
+	# pixels, so the stare comes free with the sprite.
 	var is_runner: bool = spawn.get("runner", false)
-	var palette := _runner_materials if is_runner else _zombie_materials
-	var mat: StandardMaterial3D = palette[_rng.randi_range(0, palette.size() - 1)]
-	for mesh_instance in model.find_children("*", "MeshInstance3D", true, false):
-		(mesh_instance as MeshInstance3D).material_override = mat
+	var pool := _runner_frames if is_runner else _shambler_frames
+	var frames: SpriteFrames = pool[_rng.randi_range(0, pool.size() - 1)]
+	var anim := PixelSprites.make_sprite(frames, 18)
+	node.add_child(anim)
 
-	# Glowing eye dots at face height. Pinned to the body rather than the
-	# head bone -- at pixel scale the walk bob is too small to give the trick
-	# away, and it keeps the cost to two tiny shared-mesh instances. The
-	# model faces +Z and the zombie yaws toward the player, so the dots
-	# always stare down the road at you.
-	var eye_mat := _runner_eye_material if is_runner else _eye_material
-	for x in [-0.05, 0.05]:
-		var eye := MeshInstance3D.new()
-		eye.mesh = _eye_mesh
-		eye.material_override = eye_mat
-		eye.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		eye.position = Vector3(x, 1.58, 0.09)
-		model.add_child(eye)
-
-	var anim := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	if anim:
-		if is_runner and anim.has_animation(&"Run"):
-			anim.play(&"Run")
-			anim.speed_scale = _rng.randf_range(1.0, 1.2)
-		else:
-			anim.play(&"Walk")
-			anim.speed_scale = _rng.randf_range(1.2, 1.5) if is_runner \
-					else _rng.randf_range(0.95, 1.25)
+	if is_runner:
+		anim.play(&"run")
+		anim.speed_scale = _rng.randf_range(1.0, 1.2)
+	else:
+		anim.play(&"walk")
+		anim.speed_scale = _rng.randf_range(0.95, 1.25)
 
 	# The active dict is the zombie's whole brain: plan-time traits carried
 	# over verbatim, plus the lunge state machine and the anim handle (the

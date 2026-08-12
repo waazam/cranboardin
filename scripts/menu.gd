@@ -1,20 +1,19 @@
 extends Node3D
-## Main menu: the rider stands in the neon dusk (Idle anim), sunglasses
-## bone-attached to his head, palm resting on his upright board, with the
-## procedural city backdrop behind him and its own dreamy synth theme.
-## Any key / click / tap starts the game.
+## Main menu: the pink board rests on the ground in the neon dusk, waiting
+## for a rider, with the procedural city backdrop behind it and its own
+## dreamy synth theme. Any key / click / tap starts the game.
 
-const MODEL_SCENE := preload("res://Godot/AnimationLibrary_Godot_Standard.glb")
 const GAME_SCENE := "res://scenes/main.tscn"
 const SAVE_PATH := "user://save.cfg"  # written by main.gd
 
 @onready var viewport_frame: SubViewportContainer = $ViewportFrame
 @onready var world: Node3D = $ViewportFrame/SubViewport/World
 
-## Arcade palette: hot magenta, cyan, marquee gold, CRT phosphor black.
+## Strict palette: hot pink, cyan, teal, electric purple, phosphor black.
 const NEON_PINK := Color(1.0, 0.29, 0.66)
 const NEON_CYAN := Color(0.36, 0.95, 0.98)
-const NEON_GOLD := Color(1.0, 0.78, 0.32)
+const NEON_TEAL := Color(0.28, 0.88, 0.75)
+const NEON_PURPLE := Color(0.72, 0.4, 1.0)
 const CRT_BLACK := Color(0.05, 0.02, 0.09)
 
 var _music: AudioStreamPlayer
@@ -22,14 +21,20 @@ var _font: SystemFont
 var _prompt: Label
 var _prompt_time: float = 0.0
 var _starting: bool = false
+var _camera: Camera3D
+var _camera_home: Vector3
 
 
 func _ready() -> void:
 	if _is_mobile():
 		viewport_frame.stretch_shrink = 6
 
+	# Load the game scene in the background while the menu idles, so
+	# pressing start swaps worlds without a visible hitch.
+	ResourceLoader.load_threaded_request(GAME_SCENE)
+
 	_build_stage()
-	_build_character()
+	_place_board()
 	_build_camera()
 	_build_ui()
 	_build_crt_overlay()
@@ -46,6 +51,12 @@ func _process(delta: float) -> void:
 	_prompt_time += delta
 	_prompt.visible = fmod(_prompt_time, 0.9) < 0.55
 
+	# Slow attract-mode drift: the camera breathes sideways and bobs a
+	# touch, so the street corner feels alive without anything moving in it.
+	if _camera:
+		_camera.position = _camera_home + Vector3(
+				sin(_prompt_time * 0.21) * 0.35, sin(_prompt_time * 0.34) * 0.06, 0.0)
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	var pressed: bool = (event is InputEventKey and event.pressed and not event.echo) \
@@ -55,14 +66,45 @@ func _unhandled_input(event: InputEvent) -> void:
 		_start_game()
 
 
+## Fade the screen and music down, then swap to the preloaded game scene:
+## a dip to black instead of a hard cut, so entering the run feels like
+## rolling into the world rather than switching screens.
 func _start_game() -> void:
 	if _starting:
 		return
 	_starting = true
-	get_tree().change_scene_to_file(GAME_SCENE)
+
+	var fade := ColorRect.new()
+	fade.color = Color(CRT_BLACK, 0.0)
+	fade.size = get_viewport().get_visible_rect().size
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var layer := CanvasLayer.new()
+	layer.layer = 30  # above the UI and the vignette
+	layer.add_child(fade)
+	add_child(layer)
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(fade, "color:a", 1.0, 0.4)
+	tween.tween_property(_music, "volume_db", -40.0, 0.4)
+	tween.chain().tween_callback(_swap_to_game)
+
+
+func _swap_to_game() -> void:
+	# Blocks only if the background load somehow isn't done yet.
+	var packed := ResourceLoader.load_threaded_get(GAME_SCENE) as PackedScene
+	get_tree().change_scene_to_packed(packed)
 
 
 # --- Stage ------------------------------------------------------------------
+# A little neon street corner, so the scene feels inhabited without the
+# rider: a road strip with the game's glowing center dashes and teal edge
+# lines running diagonally past the camera, and a streetlight leaning over
+# the board.
+
+## Road heading in radians -- shared by the strip, its markings, and the
+## board so everything lines up along the same diagonal.
+const ROAD_YAW := -0.55
 
 func _build_stage() -> void:
 	# Dark purple ground plane.
@@ -77,73 +119,122 @@ func _build_stage() -> void:
 	ground.material_override = mat
 	world.add_child(ground)
 
+	_build_road()
 
-func _build_character() -> void:
-	var model := MODEL_SCENE.instantiate() as Node3D
-	model.scale = Vector3.ONE * 0.9
-	# glTF models face +Z; camera sits at +Z, so he faces the viewer.
-	model.position = Vector3(0.95, 0, 0)
-	world.add_child(model)
-
-	var anim := model.find_child("AnimationPlayer", true, false) as AnimationPlayer
-	if anim:
-		anim.play(&"Idle")
-
-	var skeleton := model.find_child("Skeleton3D", true, false) as Skeleton3D
-	if skeleton:
-		_attach_sunglasses(skeleton)
-
-	_place_board()
+	# Streetlight leaning over the road from the left, matching the track's
+	# design: dark pole, arm, hot pink sodium head that blooms.
+	world.add_child(_make_streetlight(Vector3(-2.1, 0, -1.3)))
 
 
-## Sunglasses: a dark visor bar riding the head bone, so it follows the
-## Idle animation's sway.
-func _attach_sunglasses(skeleton: Skeleton3D) -> void:
-	var attachment := BoneAttachment3D.new()
-	attachment.bone_name = "DEF-head"
-	skeleton.add_child(attachment)
+## The road: a dark asphalt strip on the ROAD_YAW diagonal, with the
+## game's pink center dashes and teal edge glow lines.
+func _build_road() -> void:
+	var road_root := Node3D.new()
+	road_root.rotation.y = ROAD_YAW
+	road_root.position = Vector3(0.4, 0, -0.2)
+	world.add_child(road_root)
 
-	var visor := MeshInstance3D.new()
-	var visor_mesh := BoxMesh.new()
-	visor_mesh.size = Vector3(0.17, 0.045, 0.02)
-	visor.mesh = visor_mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.03, 0.03, 0.05)
-	mat.roughness = 0.15
-	visor.mesh = visor_mesh
-	visor.material_override = mat
-	# Offset guessed from the head bone origin; verified via screenshot.
-	visor.position = Vector3(0, 0.08, 0.1)
-	attachment.add_child(visor)
+	var asphalt := MeshInstance3D.new()
+	var strip := BoxMesh.new()
+	strip.size = Vector3(4.6, 0.06, 44.0)
+	asphalt.mesh = strip
+	asphalt.position = Vector3(0, 0.03, 0)
+	var road_mat := StandardMaterial3D.new()
+	road_mat.albedo_color = Color(0.15, 0.12, 0.21)
+	road_mat.roughness = 0.55
+	road_mat.metallic = 0.2
+	asphalt.material_override = road_mat
+	road_root.add_child(asphalt)
 
-	for side in [-1.0, 1.0]:
-		var temple := MeshInstance3D.new()
-		var temple_mesh := BoxMesh.new()
-		temple_mesh.size = Vector3(0.01, 0.012, 0.09)
-		temple.mesh = temple_mesh
-		temple.material_override = mat
-		temple.position = Vector3(side * 0.083, 0.08, 0.055)
-		attachment.add_child(temple)
+	var dash_mat := StandardMaterial3D.new()
+	dash_mat.albedo_color = Color(1.0, 0.35, 0.65)
+	dash_mat.emission_enabled = true
+	dash_mat.emission = Color(1.0, 0.3, 0.6)
+	dash_mat.emission_energy_multiplier = 1.6
+	var z := -20.0
+	while z < 20.0:
+		var dash := MeshInstance3D.new()
+		var dash_mesh := BoxMesh.new()
+		dash_mesh.size = Vector3(0.5, 0.02, 1.9)
+		dash.mesh = dash_mesh
+		dash.position = Vector3(0, 0.07, z)
+		dash.material_override = dash_mat
+		road_root.add_child(dash)
+		z += 4.5
+
+	var edge_mat := StandardMaterial3D.new()
+	edge_mat.albedo_color = Color(0.1, 0.3, 0.32)
+	edge_mat.emission_enabled = true
+	edge_mat.emission = Color(0.25, 0.95, 0.9)
+	edge_mat.emission_energy_multiplier = 1.1
+	for x in [-2.15, 2.15]:
+		var edge := MeshInstance3D.new()
+		var edge_mesh := BoxMesh.new()
+		edge_mesh.size = Vector3(0.14, 0.02, 44.0)
+		edge.mesh = edge_mesh
+		edge.position = Vector3(x, 0.07, 0)
+		edge.material_override = edge_mat
+		road_root.add_child(edge)
 
 
-## The board stands upright beside him, tail on the ground, nose under
-## his right palm, angled so its profile reads to the camera.
+func _make_streetlight(pos: Vector3) -> Node3D:
+	var item := Node3D.new()
+	item.position = pos
+	var pole_mat := StandardMaterial3D.new()
+	pole_mat.albedo_color = Color(0.2, 0.22, 0.25)
+
+	var pole := MeshInstance3D.new()
+	var pole_mesh := CylinderMesh.new()
+	pole_mesh.top_radius = 0.06
+	pole_mesh.bottom_radius = 0.08
+	pole_mesh.height = 4.2
+	pole.mesh = pole_mesh
+	pole.position = Vector3(0, 2.1, 0)
+	pole.material_override = pole_mat
+	item.add_child(pole)
+
+	var arm := MeshInstance3D.new()
+	var arm_mesh := BoxMesh.new()
+	arm_mesh.size = Vector3(1.0, 0.08, 0.08)
+	arm.mesh = arm_mesh
+	arm.position = Vector3(0.5, 4.16, 0)
+	arm.material_override = pole_mat
+	item.add_child(arm)
+
+	var lamp := MeshInstance3D.new()
+	var lamp_mesh := BoxMesh.new()
+	lamp_mesh.size = Vector3(0.32, 0.1, 0.16)
+	lamp.mesh = lamp_mesh
+	lamp.position = Vector3(0.95, 4.1, 0)
+	var lamp_mat := StandardMaterial3D.new()
+	lamp_mat.albedo_color = Color(1.0, 0.55, 0.75)
+	lamp_mat.emission_enabled = true
+	lamp_mat.emission = Color(1.0, 0.4, 0.7)
+	lamp_mat.emission_energy_multiplier = 2.6
+	lamp.material_override = lamp_mat
+	item.add_child(lamp)
+	return item
+
+
+## The board rests wheels-down on the road near the center line, angled
+## with the street so its profile and pink deck read to the camera.
 func _place_board() -> void:
 	var board := Skateboard.new()
 	# Its gameplay _physics_process would stomp the pose every frame.
 	board.set_physics_process(false)
-	board.position = Vector3(0.42, 0.425, 0.15)
-	board.basis = Basis(Vector3.UP, -1.1) * Basis(Vector3.RIGHT, -PI * 0.5)
+	board.position = Vector3(0.8, 0.09, 0.5)
+	board.rotation.y = ROAD_YAW
 	world.add_child(board)
 
 
 func _build_camera() -> void:
-	var camera := Camera3D.new()
-	camera.fov = 55.0
-	camera.position = Vector3(0.0, 1.35, 3.1)
-	world.add_child(camera)
-	camera.look_at(Vector3(0.55, 1.0, 0.0), Vector3.UP)
-	camera.current = true
+	_camera = Camera3D.new()
+	_camera.fov = 55.0
+	_camera_home = Vector3(0.0, 1.35, 3.1)
+	_camera.position = _camera_home
+	world.add_child(_camera)
+	_camera.look_at(Vector3(0.55, 0.9, -1.0), Vector3.UP)
+	_camera.current = true
 
 
 # --- UI ---------------------------------------------------------------------
@@ -181,30 +272,24 @@ func _make_label(parent: Node, text: String, size: int, color: Color, pos: Vecto
 	return label
 
 
+## Sixty-four-bit console vibes: a big chunky title with each letter in its
+## own bright color (the classic fourth-gen logo treatment) over the open
+## dusk scene, and only the essentials beneath it -- tagline, hi-score,
+## blinking PRESS START. No cabinet bezel, no corner chrome.
 func _build_ui() -> void:
 	_font = _retro_font()
 	var ui := CanvasLayer.new()
 	add_child(ui)
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 
-	_build_bezel(ui, viewport_size)
-
-	# Cabinet header, split to the two top corners.
-	_make_label(ui, "CRANBOARD CO.", 14, NEON_CYAN * Color(1, 1, 1, 0.75), Vector2(34, 26))
-	_make_label(ui, "CREDIT 01", 14, NEON_GOLD, Vector2(viewport_size.x - 132, 26))
-
 	var top := viewport_size.y * 0.24
+	# Solid hot-pink logo with a hard black drop shadow for chunky weight.
+	var title := _make_label(ui, "CRANBOARDIN", 76, NEON_PINK, Vector2(58, top))
+	title.add_theme_color_override("font_shadow_color", CRT_BLACK)
+	title.add_theme_constant_override("shadow_offset_x", 7)
+	title.add_theme_constant_override("shadow_offset_y", 7)
 
-	# Title, printed four times: a hard black drop shadow for arcade weight,
-	# then cyan/magenta fringes peeking out either side of the core --
-	# cheap chromatic aberration, the way a misconverged CRT does it.
-	var title_pos := Vector2(58, top)
-	_make_label(ui, "CRANBOARDIN", 76, CRT_BLACK, title_pos + Vector2(7, 7))
-	_make_label(ui, "CRANBOARDIN", 76, NEON_CYAN, title_pos + Vector2(-4, 0))
-	_make_label(ui, "CRANBOARDIN", 76, NEON_PINK, title_pos + Vector2(4, 0))
-	_make_label(ui, "CRANBOARDIN", 76, Color(1.0, 0.86, 0.95), title_pos)
-
-	_make_label(ui, "SKATE . DODGE . SURVIVE", 22, NEON_CYAN, Vector2(62, top + 96))
+	_make_label(ui, "SKATE . DODGE . SURVIVE", 22, NEON_CYAN, Vector2(62, top + 104))
 
 	# Persistent best from past sessions, zero-padded arcade style.
 	var cfg := ConfigFile.new()
@@ -212,99 +297,39 @@ func _build_ui() -> void:
 		_make_label(ui, "HI-SCORE %06d   LV %02d" % [
 					int(cfg.get_value("best", "score", 0)),
 					int(cfg.get_value("best", "level", 1)),
-				], 18, NEON_GOLD, Vector2(62, top + 140))
+				], 18, NEON_PURPLE, Vector2(62, top + 148))
 
-	_prompt = _make_label(ui, ">> PRESS START <<", 26, Color(1, 1, 1), Vector2(62, top + 184))
+	_prompt = _make_label(ui, ">> PRESS START <<", 26, Color(1, 1, 1), Vector2(62, top + 192))
 	_prompt.add_theme_color_override("font_shadow_color", NEON_PINK)
 	_prompt.add_theme_constant_override("shadow_offset_x", 3)
 	_prompt.add_theme_constant_override("shadow_offset_y", 3)
 
-	var hint := "TAP SCREEN" if _is_mobile() else "ANY KEY OR CLICK"
-	_make_label(ui, hint, 14, Color(1, 1, 1, 0.5), Vector2(62, top + 222))
 
-	_make_label(ui, "(C) 1989 CRANBOARD CO.", 14, Color(1, 1, 1, 0.4),
-			Vector2(34, viewport_size.y - 44))
-
-	# Version stamp, bottom-right, barely-there.
-	var ver := str(ProjectSettings.get_setting("application/config/version", ""))
-	if ver != "":
-		_make_label(ui, "V" + ver, 14, Color(1, 1, 1, 0.4),
-				Vector2(viewport_size.x - 132, viewport_size.y - 44))
-
-
-## Double neon rule around the screen edge -- the cabinet bezel.
-func _build_bezel(ui: CanvasLayer, viewport_size: Vector2) -> void:
-	# inset px, border px, colour -- outer magenta rule, inner cyan hairline.
-	var rules: Array[Array] = [
-		[14.0, 3, Color(NEON_PINK, 0.85)],
-		[22.0, 2, Color(NEON_CYAN, 0.55)],
-	]
-	for rule in rules:
-		var inset: float = rule[0]
-		var box := StyleBoxFlat.new()
-		box.bg_color = Color(0, 0, 0, 0)
-		box.set_border_width_all(rule[1])
-		box.border_color = rule[2]
-		box.set_corner_radius_all(0)
-		var panel := Panel.new()
-		panel.add_theme_stylebox_override("panel", box)
-		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		panel.position = Vector2(inset, inset)
-		panel.size = viewport_size - Vector2(inset, inset) * 2.0
-		ui.add_child(panel)
-
-
-## Full-screen CRT pass over everything: scanline comb, corner vignette,
-## a slow rolling refresh band, and a faint mains flicker.
+## A whisper of screen dressing instead of the old CRT scanline comb: just
+## a soft corner vignette, like a console-era TV without the mask.
 func _build_crt_overlay() -> void:
 	var shader := Shader.new()
 	shader.code = """
 shader_type canvas_item;
 render_mode blend_mix;
 
-uniform float line_count = 216.0;
-uniform float scan_alpha = 0.28;
-uniform float grille_alpha = 0.10;
-uniform float vignette_alpha = 0.55;
-uniform float flicker_alpha = 0.02;
+uniform float vignette_alpha = 0.4;
 
 void fragment() {
-	// Every other chunky row gets dimmed -- the scanline comb.
-	float a = step(0.5, fract(UV.y * line_count)) * scan_alpha;
-
-	// Aperture grille: faint vertical stripes, one per rendered column,
-	// crossing the scanlines into a visible pixel mask.
-	a = max(a, step(0.5, fract(UV.x * line_count * 1.78)) * grille_alpha);
-
-	// Round off the corners like a glass tube.
 	vec2 d = UV - vec2(0.5);
-	a = max(a, smoothstep(0.34, 0.82, length(d) * 1.28) * vignette_alpha);
-
-	// Mains hum, always dimming a touch, never brightening.
-	a += (0.5 + 0.5 * sin(TIME * 7.0)) * flicker_alpha;
-
-	// Refresh band drifting up the tube, the one thing that lightens.
-	vec3 tint = vec3(0.02, 0.0, 0.05);
-	float band = smoothstep(0.90, 1.0, fract(UV.y - TIME * 0.06));
-	tint = mix(tint, vec3(0.55, 0.85, 1.0), band);
-	a = max(a, band * 0.07);
-
-	COLOR = vec4(tint, clamp(a, 0.0, 1.0));
+	float a = smoothstep(0.4, 0.9, length(d) * 1.28) * vignette_alpha;
+	COLOR = vec4(vec3(0.02, 0.0, 0.05), a);
 }
 """
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	# One scanline per rendered pixel row, so the comb lines up with the
-	# 3D viewport's own pixelation (1/4 desktop, 1/6 mobile).
-	mat.set_shader_parameter("line_count", viewport_size.y / float(viewport_frame.stretch_shrink))
 
 	var overlay := ColorRect.new()
 	overlay.material = mat
 	overlay.color = Color(1, 1, 1)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.position = Vector2.ZERO
-	overlay.size = viewport_size
+	overlay.size = get_viewport().get_visible_rect().size
 
 	var layer := CanvasLayer.new()
 	layer.layer = 10  # above the UI layer

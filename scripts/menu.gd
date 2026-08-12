@@ -26,7 +26,7 @@ var _starting: bool = false
 
 func _ready() -> void:
 	if _is_mobile():
-		viewport_frame.stretch_shrink = 5
+		viewport_frame.stretch_shrink = 6
 
 	_build_stage()
 	_build_character()
@@ -263,13 +263,18 @@ shader_type canvas_item;
 render_mode blend_mix;
 
 uniform float line_count = 216.0;
-uniform float scan_alpha = 0.20;
+uniform float scan_alpha = 0.28;
+uniform float grille_alpha = 0.10;
 uniform float vignette_alpha = 0.55;
 uniform float flicker_alpha = 0.02;
 
 void fragment() {
 	// Every other chunky row gets dimmed -- the scanline comb.
 	float a = step(0.5, fract(UV.y * line_count)) * scan_alpha;
+
+	// Aperture grille: faint vertical stripes, one per rendered column,
+	// crossing the scanlines into a visible pixel mask.
+	a = max(a, step(0.5, fract(UV.x * line_count * 1.78)) * grille_alpha);
 
 	// Round off the corners like a glass tube.
 	vec2 d = UV - vec2(0.5);
@@ -291,7 +296,7 @@ void fragment() {
 	mat.shader = shader
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	# One scanline per rendered pixel row, so the comb lines up with the
-	# 3D viewport's own pixelation (1/3 desktop, 1/5 mobile).
+	# 3D viewport's own pixelation (1/4 desktop, 1/6 mobile).
 	mat.set_shader_parameter("line_count", viewport_size.y / float(viewport_frame.stretch_shrink))
 
 	var overlay := ColorRect.new()

@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/boost_manager.gd" id="9"]
 [ext_resource type="Script" path="res://scripts/trail.gd" id="10"]
 [ext_resource type="Script" path="res://scripts/ramp_manager.gd" id="11"]
+[ext_resource type="Script" path="res://scripts/obstacle_manager.gd" id="12"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1")
@@ -50,6 +51,9 @@ script = ExtResource("10")
 
 [node name="Ramps" type="Node3D" parent="ViewportFrame/SubViewport"]
 script = ExtResource("11")
+
+[node name="Obstacles" type="Node3D" parent="ViewportFrame/SubViewport"]
+script = ExtResource("12")
 
 [node name="Player" parent="ViewportFrame/SubViewport" instance=ExtResource("2")]
 

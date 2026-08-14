@@ -23,6 +23,7 @@ enum GameState { RUNNING, LEVEL_COMPLETE, GAME_OVER }
 @onready var boosts = $ViewportFrame/SubViewport/Boosts
 @onready var trail = $ViewportFrame/SubViewport/Trail
 @onready var ramps = $ViewportFrame/SubViewport/Ramps
+@onready var obstacles = $ViewportFrame/SubViewport/Obstacles
 @onready var player = $ViewportFrame/SubViewport/Player
 @onready var camera_rig = $ViewportFrame/SubViewport/CameraRig
 @onready var hud = $HUD
@@ -40,8 +41,11 @@ const SAVE_PATH := "user://save.cfg"
 const COMBO_WINDOW := 4.0
 const SCORE_TRICK := 150
 const SCORE_OVER := 200
+const SCORE_UNDER := 150  # slipping beneath a drone, grounded
 const SCORE_NEAR := 75
 const SCORE_BOOST := 50
+const SCORE_MEGA_BOOST := 125
+const SCORE_HURDLE := 100  # clearing a barrier airborne
 const SCORE_SMASH := 125
 const SCORE_RAMPAGE := 300  # every 3rd smash chained inside one boost
 const SCORE_RAMP := 75
@@ -104,6 +108,7 @@ func _ready() -> void:
 	zombies.zombie_smashed.connect(_on_zombie_smashed)
 	boosts.boosted.connect(_on_boost)
 	ramps.ramped.connect(_on_ramp)
+	obstacles.hurdled.connect(_on_hurdle)
 
 	_build_intro_overlay()
 	_load_best()
@@ -157,6 +162,7 @@ func _start_level() -> void:
 	pickups.setup(track, player, level)
 	boosts.setup(track, player, level)
 	ramps.setup(track, player, level)
+	obstacles.setup(track, player, level)
 	trail.setup(player)
 	camera_rig.snap_to_target()
 	hud.reset(level)
@@ -253,7 +259,13 @@ func _on_trick_landed(_trick_name: String) -> void:
 
 
 func _on_zombie_passed(kind: String) -> void:
-	_add_score(SCORE_OVER if kind == "over" else SCORE_NEAR)
+	match kind:
+		"over":
+			_add_score(SCORE_OVER)
+		"under":  # ducked a drone
+			_add_score(SCORE_UNDER)
+		_:
+			_add_score(SCORE_NEAR)
 
 
 func _on_zombie_smashed(pos: Vector3) -> void:
@@ -273,10 +285,12 @@ func _on_zombie_smashed(pos: Vector3) -> void:
 		camera_rig.add_shake(0.3)
 
 
-func _on_boost() -> void:
-	_add_score(SCORE_BOOST)
-	_play_sfx(_sfx_pickup, 1.6)
+func _on_boost(mega: bool) -> void:
+	_add_score(SCORE_MEGA_BOOST if mega else SCORE_BOOST)
+	_play_sfx(_sfx_pickup, 1.9 if mega else 1.6)  # megas chirp higher
 	player.burst_sparks()  # pads kick sparks too, matching the speed surge
+	if mega:
+		camera_rig.add_shake(0.18)  # the big surge lands with a kick
 	_smash_chain = 0  # a fresh pad starts a fresh chain
 
 
@@ -284,6 +298,11 @@ func _on_ramp() -> void:
 	_add_score(SCORE_RAMP)
 	_play_sfx(_sfx_jump, 0.8)  # deeper whoosh than a normal ollie
 	camera_rig.add_shake(0.12)
+
+
+func _on_hurdle() -> void:
+	_add_score(SCORE_HURDLE)
+	_play_sfx(_sfx_jump, 1.25)  # brighter whoosh: cleared the bar
 
 
 func _on_pickup_collected(_health: int) -> void:

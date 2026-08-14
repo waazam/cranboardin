@@ -31,8 +31,14 @@ extends Node3D
 ## Spawn types:
 ##   SIDE  -- starts just off the road edge and walks in across it.
 ##   AHEAD -- lurks on the road ahead and closes on the player's lateral.
+##
+## DRONES are the third class: hovering sentries that float at head height
+## over the road. They invert the jump rule -- a grounded player slips
+## clean underneath (and scores for it), while an airborne player eats the
+## hit. They drift toward the player's lane but never lunge, and a boosting
+## player who jumps into one swats it out of the sky like any other smash.
 
-signal zombie_passed(kind: String)  # "over" = cleared airborne, "near" = grazed
+signal zombie_passed(kind: String)  # "over" = cleared airborne, "near" = grazed, "under" = ducked a drone
 signal zombie_smashed(pos: Vector3)  # bowled through while boosting
 
 enum SpawnType { SIDE, AHEAD }
@@ -68,9 +74,19 @@ const MAX_LATERAL_SPEED := 10.0
 ## playable road: at least one edge lane (or a jump) always escapes.
 const PACK_SPREAD := 1.2
 
+## Drone hover band: the sprite's underside floats around DRONE_HOVER, and
+## the hit only lands while the player's feet are inside the height band --
+## grounded riders pass under untouched, and a full ramp launch (apex ~3.8)
+## clears the top of the band at its peak.
+const DRONE_HOVER := 1.9
+const DRONE_BOB := 0.3
+const DRONE_HIT_MIN_HEIGHT := 0.55
+const DRONE_HIT_MAX_HEIGHT := 3.2
+const DRONE_DRIFT_MULT := 0.7  # drones track lanes slower than walkers
+
 @export var damage_per_hit: int = 1  # health is 3 hits; each contact costs one
-@export var base_count: int = 78
-@export var count_per_level: int = 24
+@export var base_count: int = 88
+@export var count_per_level: int = 30
 
 var _track: Node3D
 var _player: Node3D
@@ -94,6 +110,7 @@ const POPUP_LIFETIME := 0.8
 ## reads at a distance.
 var _shambler_frames: Array[SpriteFrames] = []
 var _runner_frames: Array[SpriteFrames] = []
+var _drone_frames: Array[SpriteFrames] = []
 
 
 func _ready() -> void:
@@ -110,6 +127,14 @@ func _ready() -> void:
 		Color(1.0, 0.25, 0.55),   # hot pink
 	]:
 		_runner_frames.append(PixelSprites.cyborg_frames(tint, Color(0.55, 1.0, 1.0)))
+
+	# Drones sit between the halves: purple hulls with hot pink visors, so
+	# they read as danger overhead without stealing the runners' hot pink.
+	for tint: Color in [
+		Color(0.72, 0.4, 1.0),    # electric purple
+		Color(0.5, 0.45, 0.95),   # dusk indigo
+	]:
+		_drone_frames.append(PixelSprites.drone_frames(tint, Color(1.0, 0.3, 0.65)))
 
 
 func setup(track: Node3D, player: Node3D, level: int) -> void:
@@ -152,6 +177,15 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 				lat = _rng.randf_range(-half + 1.5, half - 1.5)
 			# Runners: rare fast sprinters, more common on later levels.
 			var runner: bool = _rng.randf() < minf(0.10 + 0.03 * (level - 1), 0.3)
+			# Drones: hovering sentries, rarer still. Their rolls happen for
+			# every spawn (like the weave traits below) so the RNG stream --
+			# and thus the whole level layout -- never depends on class mix.
+			var drone: bool = _rng.randf() < minf(0.08 + 0.02 * (level - 1), 0.22)
+			var drone_lat := _rng.randf_range(-half + 1.5, half - 1.5)
+			if drone:
+				runner = false  # drones trump the runner roll
+				type = SpawnType.AHEAD  # always over the road, never walking in
+				lat = drone_lat
 			# Flanking: pack members fan out evenly across the capped spread
 			# (with a little jitter so the wall isn't a picket fence);
 			# loners drift a touch off-lane so solo dodges vary too.
@@ -166,6 +200,8 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 				"lat": lat,
 				"type": type,
 				"runner": runner,
+				"drone": drone,
+				"hover_phase": _rng.randf_range(0.0, TAU),
 				"shamble": _rng.randf_range(3.2, 4.0) + (level - 1) * 0.1 if runner \
 						else _rng.randf_range(1.9, 2.7) + (level - 1) * 0.12,
 				"close": 3.5 if runner else 1.5,
@@ -245,6 +281,9 @@ func _physics_process(delta: float) -> void:
 
 		# The lateral cap is the fairness line: whatever multipliers stack,
 		# a zombie can never out-turn the player's steer_speed.
+		var is_drone: bool = z["drone"]
+		if is_drone:
+			shamble *= DRONE_DRIFT_MULT
 		shamble = minf(shamble, MAX_LATERAL_SPEED)
 		zlat = move_toward(zlat, clampf(target, -half + 0.4, half - 0.4), shamble * delta)
 		if player_running and zs > _player.s:
@@ -254,30 +293,51 @@ func _physics_process(delta: float) -> void:
 
 		var xf: Transform3D = _track.transform_at(zs, zlat)
 		var node := z["node"] as Node3D
-		node.position = xf.origin  # billboard sprite faces the camera on its own
+		# Drones float at head height with a slow bob off the shared clock;
+		# everyone else stands on the road. Billboard faces the camera on
+		# its own either way.
+		var hover := 0.0
+		if is_drone:
+			hover = DRONE_HOVER + DRONE_BOB * sin(_weave_time * 1.8 + z["hover_phase"])
+		node.position = xf.origin + xf.basis.y * hover
 
-		# Contact damage -- unless the player is airborne over them.
+		# Contact damage. Walkers only land hits on a low player (jump over
+		# them); drones invert it and only land hits on an airborne one
+		# (stay low and slip under).
+		var in_height: bool
+		if is_drone:
+			in_height = _player.height > DRONE_HIT_MIN_HEIGHT \
+					and _player.height < DRONE_HIT_MAX_HEIGHT
+		else:
+			in_height = _player.height < HIT_MAX_HEIGHT
 		if player_running \
 				and absf(zs - _player.s) < HIT_S_RANGE \
 				and absf(zlat - _player.lateral) < HIT_LATERAL_RANGE \
-				and _player.height < HIT_MAX_HEIGHT:
+				and in_height:
 			if _player.is_boosting():
 				# Boosting bowls straight through: launch it, no damage.
+				# (Yes, a boosting jump swats drones out of the sky.)
 				_launch(z, xf)
 				_active.remove_at(i)
-				zombie_smashed.emit(xf.origin)
+				zombie_smashed.emit(node.position)
 				i -= 1
 				continue
 			z["scored"] = true  # no style points off the zombie that got you
 			_player.take_damage(damage_per_hit)
 
 		# Style scoring, once per zombie, as the player clears it: jumped
-		# clean over it, or squeaked past within near-miss range.
+		# clean over it (or ducked under a drone), or squeaked past within
+		# near-miss range.
 		if not z["scored"] and zs < _player.s - 0.6:
 			z["scored"] = true
 			if player_running:
 				var lat_gap := absf(zlat - _player.lateral)
-				if lat_gap < HIT_LATERAL_RANGE and _player.height >= HIT_MAX_HEIGHT:
+				if is_drone:
+					if lat_gap < HIT_LATERAL_RANGE:
+						zombie_passed.emit("under")
+					elif lat_gap < NEAR_MISS_RANGE:
+						zombie_passed.emit("near")
+				elif lat_gap < HIT_LATERAL_RANGE and _player.height >= HIT_MAX_HEIGHT:
 					zombie_passed.emit("over")
 				elif lat_gap < NEAR_MISS_RANGE:
 					zombie_passed.emit("near")
@@ -358,15 +418,24 @@ func _activate(spawn: Dictionary) -> void:
 	add_child(node)
 
 	# One billboard sprite from the shared tinted pools: cool-tinted aliens
-	# for shamblers, hot cyborgs for runners. Eyes and visors are baked hot
-	# pixels, so the stare comes free with the sprite.
+	# for shamblers, hot cyborgs for runners, purple hulls for drones. Eyes
+	# and visors are baked hot pixels, so the stare comes free with the
+	# sprite.
 	var is_runner: bool = spawn.get("runner", false)
-	var pool := _runner_frames if is_runner else _shambler_frames
+	var is_drone: bool = spawn.get("drone", false)
+	var pool := _shambler_frames
+	if is_drone:
+		pool = _drone_frames
+	elif is_runner:
+		pool = _runner_frames
 	var frames: SpriteFrames = pool[_rng.randi_range(0, pool.size() - 1)]
-	var anim := PixelSprites.make_sprite(frames, 18)
+	var anim := PixelSprites.make_sprite(frames, 10 if is_drone else 18)
 	node.add_child(anim)
 
-	if is_runner:
+	if is_drone:
+		anim.play(&"hover")
+		anim.speed_scale = _rng.randf_range(0.9, 1.15)
+	elif is_runner:
 		anim.play(&"run")
 		anim.speed_scale = _rng.randf_range(1.0, 1.2)
 	else:
@@ -383,6 +452,8 @@ func _activate(spawn: Dictionary) -> void:
 		"shamble": spawn["shamble"],
 		"close": spawn.get("close", 1.5),
 		"runner": is_runner,
+		"drone": is_drone,
+		"hover_phase": spawn.get("hover_phase", 0.0),
 		"flank": spawn.get("flank", 0.0),
 		"weave_phase": spawn.get("weave_phase", 0.0),
 		"weave_amp": spawn.get("weave_amp", 0.0),

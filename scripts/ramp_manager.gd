@@ -10,8 +10,8 @@ const RAMP_LATERAL_RANGE := 1.6
 const RAMP_MAX_HEIGHT := 0.3
 const LAUNCH_VELOCITY := 13.0
 
-@export var base_count: int = 4
-@export var count_per_level: int = 1
+@export var base_count: int = 7
+@export var count_per_level: int = 2
 
 var _track: Node3D
 var _player: Node3D

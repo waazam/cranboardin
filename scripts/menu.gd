@@ -321,6 +321,48 @@ func _build_ui() -> void:
 	_prompt.add_theme_constant_override("shadow_offset_x", 3)
 	_prompt.add_theme_constant_override("shadow_offset_y", 3)
 
+	_build_scoring_card(ui, top + 212.0)
+
+
+## Arcade-manual scoring table under the start prompt: how every point in
+## the game is earned, straight from main.gd's SCORE_* values, plus the
+## combo rule. Teal move names, white points, monospace-aligned columns,
+## all on a translucent black plate so the rows stay legible over the
+## glowing road behind them.
+func _build_scoring_card(ui: CanvasLayer, y: float) -> void:
+	var rows: Array = [
+		["LAND A TRICK", "150"],
+		["JUMP OVER AN ENEMY", "200"],
+		["SLIP UNDER A DRONE", "150"],
+		["HURDLE A BARRIER", "100"],
+		["NEAR MISS", "75"],
+		["SMASH WHILE BOOSTING", "125"],
+		["BOOST PAD / MEGA PAD", "50/125"],
+		["HIT A RAMP", "75"],
+		["FINISH THE RUN", "500"],
+	]
+	var card_height := 34.0 + rows.size() * 20.0 + 8.0 + 20.0 + 22.0
+	# On a window too short for the full table, keep the postcard clean
+	# rather than running the rows off the bottom edge.
+	if get_viewport().get_visible_rect().size.y - y < card_height:
+		return
+
+	var plate := ColorRect.new()
+	plate.color = Color(CRT_BLACK, 0.6)
+	plate.position = Vector2(50.0, y - 10.0)
+	plate.size = Vector2(420.0, card_height)
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(plate)
+
+	_make_label(ui, "HOW TO SCORE", 20, NEON_CYAN, Vector2(62, y))
+	y += 34.0
+	for row: Array in rows:
+		_make_label(ui, row[0], 14, NEON_TEAL, Vector2(62, y))
+		_make_label(ui, row[1], 14, Color(1, 1, 1), Vector2(388, y))
+		y += 20.0
+	y += 8.0
+	_make_label(ui, "CHAIN MOVES TO BUILD A x5 COMBO", 14, NEON_PURPLE, Vector2(62, y))
+
 
 ## A whisper of screen dressing instead of the old CRT scanline comb: just
 ## a soft corner vignette, like a console-era TV without the mask.

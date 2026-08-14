@@ -114,6 +114,41 @@ const CYBORG_RUN_2 := [
 	"................",
 ]
 
+# --- Drone frames -----------------------------------------------------------
+# 16x12 canvas, front view: a hovering twin-rotor sentry with a glowing
+# visor band. It floats at head height -- the one enemy you slip UNDER
+# instead of jumping over, so the silhouette reads "ceiling", not "wall".
+
+const DRONE_HOVER_1 := [
+	".KKKK......KKKK.",
+	"KMmmMK....KMmmMK",
+	"...KMK....KMK...",
+	"....KKKKKKKK....",
+	"...KFFFFFFFFK...",
+	"..KFfEEEEEEfFK..",
+	"..KFffffffffFK..",
+	"...KcCCCCCCcK...",
+	"....KmK..KmK....",
+	"....KMK..KMK....",
+	"................",
+	"................",
+]
+
+const DRONE_HOVER_2 := [
+	"..KKK......KKK..",
+	"KmMMmK....KmMMmK",
+	"...KMK....KMK...",
+	"....KKKKKKKK....",
+	"...KFFFFFFFFK...",
+	"..KFfEEEEEEfFK..",
+	"..KFffffffffFK..",
+	"...KcCCCCCCcK...",
+	"...KmK....KmK...",
+	"...KMK....KMK...",
+	"................",
+	"................",
+]
+
 # --- Cranberry bottle -------------------------------------------------------
 # 10x16 canvas: crimson juice, silver cap, a shimmering highlight that
 # hops between frames so the pickup sparkles as it bobs.
@@ -218,6 +253,15 @@ static func cyborg_frames(tint: Color, eye: Color) -> SpriteFrames:
 	var frames := SpriteFrames.new()
 	frames.remove_animation(&"default")
 	_add_anim(frames, &"run", 7.0, true, [CYBORG_RUN_1, CYBORG_RUN_2],
+			_tint_palette(tint, eye))
+	return frames
+
+
+## One tinted drone variant: a "hover" loop (the rotor blur alternates).
+static func drone_frames(tint: Color, eye: Color) -> SpriteFrames:
+	var frames := SpriteFrames.new()
+	frames.remove_animation(&"default")
+	_add_anim(frames, &"hover", 6.0, true, [DRONE_HOVER_1, DRONE_HOVER_2],
 			_tint_palette(tint, eye))
 	return frames
 

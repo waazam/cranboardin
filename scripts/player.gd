@@ -67,8 +67,10 @@ var _spin_duration: float = 0.7
 var _spin_time_left: float = 0.0
 ## Pending trick name; cleared on landing (scores) or on a hit (voids).
 var _active_trick: String = ""
-## Boost pads grant a short window of extra target speed.
+## Boost pads grant a short window of extra target speed; mega pads push
+## a bigger bonus through the same window.
 var _boost_timer: float = 0.0
+var _boost_strength: float = 14.0
 
 ## Visual rig: `visuals` is the tuck/blink pivot; board and rider are
 ## separate entities beneath it (skateboard.gd / character.gd).
@@ -213,6 +215,7 @@ func reset_run() -> void:
 	_spin_time_left = 0.0
 	_active_trick = ""
 	_boost_timer = 0.0
+	_boost_strength = 14.0
 	character.reset()
 	_dust.restart()  # clear puffs left hanging at the previous crash site
 	_dust.amount_ratio = 0.0
@@ -328,7 +331,7 @@ func _update_speed(delta: float) -> void:
 	accel_axis = clampf(accel_axis, -1.0, 1.0)
 
 	_boost_timer = maxf(_boost_timer - delta, 0.0)
-	var pad_bonus := 14.0 if _boost_timer > 0.0 else 0.0
+	var pad_bonus := _boost_strength if _boost_timer > 0.0 else 0.0
 
 	var target_speed: float = lerp(base_speed, max_speed, get_progress())
 	target_speed += accel_boost * maxf(accel_axis, 0.0)
@@ -388,10 +391,14 @@ func _update_trick(delta: float, grounded: bool) -> void:
 		visuals.rotation.y = TAU * (1.0 - _spin_time_left / _spin_duration) if _spin_time_left > 0.0 else 0.0
 
 
-## Called by boost pads: a short burst of extra target speed.
-func apply_boost(duration: float = 1.8) -> void:
-	if run_state == RunState.RUNNING:
-		_boost_timer = maxf(_boost_timer, duration)
+## Called by boost pads: a short burst of extra target speed. Mega pads
+## pass a bigger strength; overlapping boosts keep the stronger surge.
+func apply_boost(duration: float = 1.8, strength: float = 14.0) -> void:
+	if run_state != RunState.RUNNING:
+		return
+	var was_boosting := _boost_timer > 0.0
+	_boost_timer = maxf(_boost_timer, duration)
+	_boost_strength = maxf(_boost_strength, strength) if was_boosting else strength
 
 
 ## Called by launch ramps: a big assisted jump with the usual trick.

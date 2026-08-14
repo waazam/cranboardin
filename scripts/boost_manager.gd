@@ -7,7 +7,7 @@ extends Node3D
 ## One-shot per pass; placement is seeded per level like every other
 ## spawner.
 
-signal boosted()
+signal boosted(mega: bool)
 
 const PAD_S_RANGE := 2.0
 const PAD_LATERAL_RANGE := 1.7
@@ -18,20 +18,36 @@ const PAD_MAX_HEIGHT := 0.35
 ## sweeps a sine wave through those phases so light appears to run downhill
 ## across the ">>>" -- no per-instance materials, one uniform set per frame.
 ## Wave crests push the albedo well past 1.0 so the pads bloom.
+##
+## COLOR.g flags MEGA pads: it lerps the palette from cyan to electric
+## purple and doubles the sweep speed, so the big pads read hungrier at a
+## glance. (An integer speed multiple keeps the fmod-wrapped uniform
+## seamless -- sin is TAU-periodic.)
 const CHEVRON_SHADER := """
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 uniform float pulse_time = 0.0;
 uniform vec3 base_color : source_color = vec3(0.3, 0.95, 0.95);
 uniform vec3 hot_color : source_color = vec3(0.85, 1.0, 1.0);
+uniform vec3 mega_base : source_color = vec3(0.75, 0.35, 1.0);
+uniform vec3 mega_hot : source_color = vec3(1.0, 0.75, 1.0);
 void fragment() {
-	float wave = 0.5 + 0.5 * sin(COLOR.r * TAU - pulse_time);
-	ALBEDO = mix(base_color, hot_color, wave) * (1.2 + 1.6 * wave);
+	float wave = 0.5 + 0.5 * sin(COLOR.r * TAU - pulse_time * (1.0 + COLOR.g));
+	vec3 lo = mix(base_color, mega_base, COLOR.g);
+	vec3 hi = mix(hot_color, mega_hot, COLOR.g);
+	ALBEDO = mix(lo, hi, wave) * (1.2 + 1.6 * wave);
 }
 """
 
-@export var base_count: int = 11
-@export var count_per_level: int = 3
+## Mega pads: rarer purple pads with a longer, stronger surge -- the ones
+## worth swerving across the road for.
+const MEGA_CHANCE := 0.22
+const BOOST_DURATION := 2.4
+const MEGA_DURATION := 3.4
+const MEGA_STRENGTH := 20.0
+
+@export var base_count: int = 14
+@export var count_per_level: int = 4
 
 var _track: Node3D
 var _player: Node3D
@@ -71,8 +87,9 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	for i in count:
 		var s := start_s + spacing * i + _rng.randf_range(0.0, spacing * 0.4)
 		var lat := _rng.randf_range(-half + 1.6, half - 1.6)
-		_pads.append({"s": s, "lat": lat, "used": false})
-		_add_chevrons(st, s, lat)
+		var mega := _rng.randf() < MEGA_CHANCE
+		_pads.append({"s": s, "lat": lat, "used": false, "mega": mega})
+		_add_chevrons(st, s, lat, mega)
 
 	_mesh = MeshInstance3D.new()
 	_mesh.mesh = st.commit()
@@ -80,11 +97,13 @@ func setup(track: Node3D, player: Node3D, level: int) -> void:
 	add_child(_mesh)
 
 
-## Three ">>>" chevrons pointing downhill. COLOR.r carries each chevron's
-## phase down the pad (0, 1/3, 2/3) for the shader's traveling wave.
-func _add_chevrons(st: SurfaceTool, s: float, lat: float) -> void:
-	for k in 3:
-		st.set_color(Color(k / 3.0, 0.0, 0.0))
+## Chevrons pointing downhill -- three per pad, four on a mega. COLOR.r
+## carries each chevron's phase down the pad for the shader's traveling
+## wave; COLOR.g carries the mega flag into the palette lerp.
+func _add_chevrons(st: SurfaceTool, s: float, lat: float, mega: bool) -> void:
+	var n := 4 if mega else 3
+	for k in n:
+		st.set_color(Color(k / float(n), 1.0 if mega else 0.0, 0.0))
 		var s0 := s - 1.6 + k * 1.1
 		for side in [-1.0, 1.0]:
 			_add_quad(st,
@@ -125,5 +144,9 @@ func _physics_process(delta: float) -> void:
 			pad["used"] = true
 			# Longer than the player's 1.8s default: pads are the run's rhythm
 			# now, so each hit should feel like a real surge, not a blip.
-			_player.apply_boost(2.4)
-			boosted.emit()
+			# Megas surge harder and longer still.
+			if pad["mega"]:
+				_player.apply_boost(MEGA_DURATION, MEGA_STRENGTH)
+			else:
+				_player.apply_boost(BOOST_DURATION)
+			boosted.emit(pad["mega"])

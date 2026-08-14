@@ -36,6 +36,17 @@ board rolls under you) and a **360 spin** (the whole rider spins).
   your lane. Contact costs 26 HP and a chunk of speed (with a brief
   blink-invulnerability window); at 0 HP you crash out -- game over,
   `R` to retry. Jumping clears them.
+- **Drones** hover at head height over the road: stay low and slip
+  underneath (worth points) -- jumping into one costs a hit.
+- **Hazard barriers** stand across the lane in pink warning stripes:
+  hurdle them airborne for points or steer around; riding into one
+  costs a hit.
+- **Boost pads** (cyan chevrons) surge you forward -- and while
+  boosting you bowl straight through the horde. Rarer purple **mega
+  pads** surge harder and longer. Neon **ramps** fling you into big
+  assisted airs.
+- The main menu lists every scoring move; chaining moves builds a
+  combo multiplier up to x5.
 - **Cranberry bottles** restore 30 HP -- or *overheal* you up to 150
   if you're already full (the HP bar turns cranberry).
 - Reach the bottom to finish the level; `R` rolls you into the next,
